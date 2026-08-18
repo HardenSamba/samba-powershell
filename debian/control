@@ -1,0 +1,13 @@
+Source: samba-powershell
+Section: admin
+Priority: optional
+Maintainer: HardenSamba <noreply@example.invalid>
+Build-Depends: debhelper-compat (= 13), dh-python, python3-all, python3-setuptools
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: samba-powershell
+Architecture: all
+Depends: ${python3:Depends}, ${misc:Depends}, powershell
+Description: PowerShell on Linux for Samba Active Directory administration.
+ Provides the Active Directory cmdlets on Linux, so a domain can be administered from a terminal without a Windows workstation.
