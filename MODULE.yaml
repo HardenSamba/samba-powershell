@@ -1,0 +1,25 @@
+name: samba-powershell
+summary: PowerShell on Linux for Samba Active Directory administration.
+version: 0.1.0
+language:
+  primary: python
+  exceptions:
+  - component: cmdlet surface
+    language: powershell
+    reason: A PowerShell module cannot be written in Python.
+installs_on:
+- domain-controller
+- workstation
+requires:
+  samba_ad_domain: true
+  modules:
+  - name: samba-adws
+    strength: depends
+    reason: The cmdlets speak the web services protocol.
+  debian_packages:
+  - powershell
+provides:
+  commands:
+  - Import-Module SambaAD
+writes:
+  config_dir: /etc/hardensamba/samba-powershell/
