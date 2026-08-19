@@ -139,7 +139,8 @@ if (-not $IsLinux) {
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$fixture = Join-Path $repoRoot 'tests/fixtures/fake_backend.py'
+$source = Join-Path $repoRoot 'src'
+$stub = Join-Path $repoRoot 'tests/fixtures/stub_adws'
 $echoBackend = Join-Path $PSScriptRoot 'echo_backend.py'
 $temporary = Join-Path ([System.IO.Path]::GetTempPath()) (
     'samba-ad-benchmark-' + [System.Guid]::NewGuid().ToString('N')
@@ -148,10 +149,12 @@ $wrapper = $temporary + '-backend'
 $socketPath = $temporary + '.sock'
 $oldBackend = $env:SAMBA_POWERSHELL_BACKEND
 $oldModulePath = $env:PSModulePath
+$oldPythonPath = $env:PYTHONPATH
 
 try {
+    $env:PYTHONPATH = $source + [System.IO.Path]::PathSeparator + $stub
     Set-Content -LiteralPath $wrapper -Value (
-        "#!/bin/sh`nexec `"$PythonPath`" `"$fixture`" `"`$@`""
+        "#!/bin/sh`nexec `"$PythonPath`" -m samba_powershell.cli `"`$@`""
     ) -Encoding utf8NoBOM
     & chmod 700 $wrapper
     $env:SAMBA_POWERSHELL_BACKEND = $wrapper
@@ -174,6 +177,7 @@ try {
 } finally {
     $env:SAMBA_POWERSHELL_BACKEND = $oldBackend
     $env:PSModulePath = $oldModulePath
+    $env:PYTHONPATH = $oldPythonPath
     Remove-Item -LiteralPath $wrapper -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $socketPath -Force -ErrorAction SilentlyContinue
 }

@@ -132,7 +132,10 @@ claimed by this ticket.
 
 `benchmarks/transport.ps1` measures a real `Get-ADUser` call through the
 PowerShell module and a resident Python Unix-socket prototype, without
-directory or network work. Run this exact command in a clean `debian:stable`
+directory or network work. The measured process is the shipped backend
+entry point, with only the ADWS client replaced by the offline stub, so the
+interpreter start being timed includes the real package import rather than
+that of a bare fixture script. Run this exact command in a clean `debian:stable`
 environment after adding the PowerShell runtime described above:
 
 ```powershell
