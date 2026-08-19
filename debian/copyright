@@ -1,0 +1,12 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: samba-powershell
+Source: https://github.com/HardenSamba/samba-powershell
+Comment:
+ The definitive licence is tracked by
+ https://github.com/HardenSamba/hardensamba-modulekit/issues/5.
+ This placeholder is packaging metadata, not a licence grant.
+
+Files: *
+Copyright: 2026 HardenSamba contributors
+License: TO-BE-DECIDED-IN-ISSUE-5
+ The licence text will be added when issue #5 is resolved.
