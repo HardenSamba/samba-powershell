@@ -14,12 +14,14 @@ jobs:
       - name: Install tooling
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends python3 python3-pip python3-yaml \
-            python3-jsonschema git
+          apt-get install -y --no-install-recommends \
+            python3 python3-yaml python3-jsonschema git ca-certificates
+      - name: Fetch the contract validator
+        run: git clone --depth 1 https://github.com/HardenSamba/hardensamba-modulekit /tmp/modulekit
       - name: Validate the module contract
-        run: |
-          git clone --depth 1 https://github.com/HardenSamba/hardensamba-modulekit /tmp/mk || true
-          if [ -d /tmp/mk ]; then PYTHONPATH=/tmp/mk/src python3 -m modulekit.cli validate .; fi
+        run: PYTHONPATH=/tmp/modulekit/src python3 -m modulekit.cli validate .
+      - name: Check the coding standard
+        run: PYTHONPATH=/tmp/modulekit/src python3 -m modulekit.cli lint src tests
 
   test:
     runs-on: ubuntu-latest
@@ -29,6 +31,9 @@ jobs:
       - name: Install tooling
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends python3 python3-pytest python3-mypy
+          apt-get install -y --no-install-recommends \
+            python3 python3-pytest mypy ca-certificates
+      - name: Types
+        run: mypy --strict src
       - name: Tests
-        run: python3 -m pytest tests -q || echo "no tests yet"
+        run: PYTHONPATH=src python3 -m pytest tests -q
