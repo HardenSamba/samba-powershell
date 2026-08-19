@@ -21,6 +21,10 @@ function Invoke-SambaADBackend {
     $startInfo.RedirectStandardInput = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $utf8 = [System.Text.UTF8Encoding]::new($false)
+    $startInfo.StandardInputEncoding = $utf8
+    $startInfo.StandardOutputEncoding = $utf8
+    $startInfo.StandardErrorEncoding = $utf8
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
 

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import io
 import sys
+import traceback
 from typing import TextIO
 
 from samba_powershell import __version__
@@ -35,10 +37,17 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "request":
-        return request(sys.stdin, sys.stdout)
+        return request(utf8_stream(sys.stdin), utf8_stream(sys.stdout))
     if args.command == "status":
         return status()
     return 1
+
+
+# Pins the protocol channel to UTF-8 so it never depends on the caller locale.
+def utf8_stream(stream: TextIO) -> TextIO:
+    if isinstance(stream, io.TextIOWrapper):
+        stream.reconfigure(encoding="utf-8", errors="strict")
+    return stream
 
 
 # Handles one request without allowing exceptions onto the JSON channel.
@@ -50,6 +59,7 @@ def request(input_stream: TextIO, output_stream: TextIO) -> int:
         write_response(failure_response(exc), output_stream)
         return 1
     except Exception:
+        traceback.print_exc(file=sys.stderr)
         write_response(
             failure_response(
                 BackendError("The backend failed.", "SambaAD.BackendFailure")

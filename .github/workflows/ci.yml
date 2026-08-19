@@ -69,6 +69,9 @@ jobs:
       - name: Test the PowerShell boundary
         shell: pwsh
         run: ./tests/test_powershell.ps1 -PythonPath (Get-Command python3).Source
+      - name: Compose the module with the real backend
+        shell: pwsh
+        run: ./tests/test_composition.ps1 -PythonPath (Get-Command python3).Source
       - name: Measure PowerShell to Python transports
         shell: pwsh
         run: ./benchmarks/transport.ps1 -PythonPath (Get-Command python3).Source

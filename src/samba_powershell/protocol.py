@@ -14,9 +14,9 @@ PROTOCOL_VERSION = 1
 def read_request(stream: TextIO) -> dict[str, object]:
     try:
         value: object = json.load(stream)
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise BackendError(
-            "The backend request is not valid JSON.",
+            "The backend request is not valid UTF-8 JSON.",
             "SambaAD.InvalidRequest",
             "ParserError",
         ) from exc

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from io import StringIO
+from io import BytesIO, StringIO, TextIOWrapper
 
 import pytest
 
@@ -48,3 +48,12 @@ def test_error_response_preserves_fields() -> None:
         "category": "ObjectNotFound",
         "target": "alice",
     }
+
+
+# Bytes that are undecodable in the stream encoding stay a typed request error.
+def test_undecodable_request_is_a_typed_error() -> None:
+    stream = TextIOWrapper(BytesIO(bytes([0xFF, 0xFE])), encoding="ascii")
+    with pytest.raises(BackendError) as raised:
+        read_request(stream)
+    assert raised.value.error_id == "SambaAD.InvalidRequest"
+    assert raised.value.category == "ParserError"

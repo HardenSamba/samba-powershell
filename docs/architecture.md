@@ -112,6 +112,14 @@ PowerShell converts that envelope into an `ErrorRecord`. The `error_id` becomes
 the `FullyQualifiedErrorId`, `category` maps to `ErrorCategory`, and `target`
 becomes `TargetObject`. Python tracebacks are never part of the public channel.
 
+Both halves pin the channel to UTF-8 rather than inheriting it. The backend
+reconfigures its protocol streams and the PowerShell bridge sets the three
+standard-stream encodings, so a directory value survives a caller locale such
+as `LC_ALL=C`. Without that pin an accented value crosses the boundary
+corrupted, or a valid request degrades into an untyped failure. Request bytes
+that do not decode raise the same typed `SambaAD.InvalidRequest` error as
+malformed JSON.
+
 Objects become `PSCustomObject` instances whose first `PSTypeName` is the
 response `type`. `powershell/SambaAD/SambaAD.Format.ps1xml` supplies the default
 table view, so `Get-Member` sees properties rather than a JSON string.
@@ -155,6 +163,7 @@ substituted for the acceptance environment.
 | `powershell/SambaAD/SambaAD.Format.ps1xml` | Default typed-object formatting |
 | `src/samba_powershell/` | Typed backend protocol, dispatch and ADWS adapter |
 | `tests/` | Offline Python and PowerShell boundary tests |
+| `tests/test_composition.ps1` | The module driving the real backend, ADWS client stubbed |
 | `benchmarks/transport.ps1` | PowerShell-to-Python acceptance measurements |
 | `benchmarks/transport.py` | Lower-level transport reproducibility check |
 
