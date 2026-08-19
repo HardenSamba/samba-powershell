@@ -23,7 +23,7 @@ What is actually in this repository today:
 | A CLI entry point that prints `not implemented yet` | Any cmdlet |
 | Three smoke tests (package imports, `--version`, `status` runs) | Any connection to `samba-adws` |
 | A Debian packaging skeleton under `debian/` | A built or published package |
-| CI running the contract check and pytest on plain Debian | An `install.sh` |
+| A CI workflow on plain Debian, running the contract check and pytest | An `install.sh`, and CI steps that fail the build when a check fails |
 | `MODULE.yaml`, declaring the intended surface | A configuration file, or code that reads one |
 
 The first working version is not the full cmdlet set. It is the architecture
@@ -152,6 +152,11 @@ dpkg-buildpackage -us -uc -b
 sudo apt install ../samba-powershell_0.1.0-1_all.deb
 ```
 
+That path is written from `debian/control` and `debian/changelog`, which give
+the package name and the `0.1.0-1` version in the filename. It is not exercised
+anywhere: the CI workflow has no build job, and no package has been produced
+from it yet. Treat it as the intended route rather than a tested one.
+
 The ecosystem contract also expects an `install.sh` at the repository root, for
 manual installation on a Debian or Ubuntu system without the archive. This
 repository does not carry one yet.
@@ -183,11 +188,12 @@ options:
   --version   show program's version number and exit
 ```
 
-The `usage:` line reads `Import-Module` because `pyproject.toml` currently
-declares that as the console script name, matching the command declared in
-`MODULE.yaml`. It is a scaffold artefact. `Import-Module` is a PowerShell
-keyword, not a shell command, and the naming will be corrected when the real
-cmdlet surface lands.
+The `usage:` line reads `Import-Module` because `src/samba_powershell/cli.py`
+passes `prog="Import-Module"` to the argument parser. `pyproject.toml` declares
+the same string as its console script name, and `MODULE.yaml` declares the
+command as `Import-Module SambaAD`. All three are scaffold artefacts.
+`Import-Module` is a PowerShell keyword, not a shell command, and the naming
+will be corrected when the real cmdlet surface lands.
 
 ### What is planned
 
@@ -291,13 +297,17 @@ this module ever stops working on plain Debian, it is broken.
 git clone https://github.com/HardenSamba/samba-powershell.git
 cd samba-powershell
 
-sudo apt install python3 python3-pytest python3-mypy git
+sudo apt install python3 python3-pytest python3-mypy git \
+  python3-yaml python3-jsonschema
 
 python3 -m pytest tests -q        # 3 passed
-mypy --strict src
+mypy --strict src                 # Success: no issues found in 2 source files
 ```
 
-Both contract checks must pass before a commit:
+`python3-yaml` and `python3-jsonschema` are there for `modulekit`, which needs
+both and is not otherwise a dependency of this module.
+
+Both contract checks must pass before a commit, and both pass today:
 
 ```bash
 modulekit validate .              # the manifest and the write surface
@@ -312,8 +322,23 @@ PYTHONPATH=/tmp/mk/src python3 -m modulekit.cli validate .
 PYTHONPATH=/tmp/mk/src python3 -m modulekit.cli lint src tests
 ```
 
-CI runs both on `debian:stable`, never on a HardenSamba image. A test that only
+CI runs on `debian:stable`, never on a HardenSamba image. A test that only
 passes with extra software installed is a defect in the test.
+
+What CI does not do is gate anything, so read `.github/workflows/ci.yml` before
+trusting a green tick:
+
+- The contract job runs `modulekit validate .`, but the clone that fetches
+  `modulekit` ends in `|| true` and the check is wrapped in a directory test. A
+  failed clone skips the check and the job still reports success.
+- The test job runs `python3 -m pytest tests -q || echo "no tests yet"`, so a
+  failing test does not fail the build.
+- `modulekit lint` is never invoked in CI at all. The coding standard is checked
+  only by whoever runs it locally.
+- `python3-mypy` is installed in the test job and then never run.
+
+Making those steps blocking is outstanding work, not something already in
+place.
 
 ### Layout
 
@@ -354,8 +379,9 @@ path to the two `modulekit` checks.
 
 The coding standard is
 [section 8 of the module contract](https://github.com/HardenSamba/hardensamba-modulekit),
-and it is enforced by `modulekit lint` in CI. A violation fails the build. It is
-not a review comment you can argue with.
+and it is checked by `modulekit lint`. It is not a review comment you can argue
+with: the rules are mechanical and the checker decides. CI does not run the
+linter yet, so until it does, running it before a commit is on you.
 
 Three rules surprise people, so they are worth stating up front:
 
@@ -389,6 +415,13 @@ Protocol work is grounded in published specifications: Microsoft Open
 Specifications, RFCs, W3C recommendations. Contributions must not derive from
 disassembled or otherwise obscure sources, and identifiers must not mirror the
 internal naming of any proprietary implementation.
+
+<!-- modulekit: allow-provenance-marker -->
+
+The paragraph above states the provenance rule, and stating it trips the
+scanner that enforces it. The marker on the line above is the exemption
+`modulekit validate` provides for a file that discusses the rule rather than
+breaks it. `CLAUDE.md` carries the same marker for the same reason.
 
 ## Licence
 
