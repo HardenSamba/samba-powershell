@@ -222,9 +222,13 @@ Set-ADAccountPassword -Identity jdoe -Reset
 Remove-ADUser -Identity jdoe -WhatIf
 ```
 
-Authentication will follow the transport: Kerberos through the existing ticket
-cache, with the directory enforcing the rights of the calling principal. The
-module will not carry a permission model of its own.
+Authentication follows the transport through the caller's existing Kerberos
+ticket cache. The module will not carry a permission model of its own. The
+server must enforce the calling principal's directory rights, but it currently
+uses a SYSTEM `SamDB` session; that security blocker is tracked in
+[`samba-adws#8`](https://github.com/HardenSamba/samba-adws/issues/8). No write
+surface is considered safe or complete until that issue has a live allow/deny
+proof.
 
 ## Configuration
 

@@ -24,6 +24,14 @@ Its installable Debian artefact is tracked separately in
 lands, the source proof may use the client checkout but the declared package
 dependency cannot be satisfied from the HardenSamba archive.
 
+The client preserves the caller's Kerberos cache, but the current ADWS server
+does not yet bind its accepted GSSAPI identity to the `SamDB` session. That
+authorization flaw is tracked in
+[samba-adws#8](https://github.com/HardenSamba/samba-adws/issues/8). A live read
+can prove authentication and the end-to-end protocol, but it must not be cited
+as proof that Samba evaluated the caller's ACLs. Write cmdlets remain blocked
+until #8 has a live allow/deny test.
+
 ## Chosen process boundary
 
 Each cmdlet starts `samba-ad-backend request`, writes one versioned JSON object
