@@ -1,8 +1,9 @@
-"""Smoke tests: the package imports and the entry point answers."""
+"""Smoke tests for the package and backend entry point."""
 
 from __future__ import annotations
 
 import pytest
+from io import StringIO
 
 from samba_powershell import __version__, cli
 
@@ -22,3 +23,21 @@ def test_version_flag_exits_zero() -> None:
 # The status subcommand runs.
 def test_status_runs() -> None:
     assert cli.main(["status"]) == 0
+
+
+# A malformed request becomes JSON instead of a Python traceback.
+def test_request_error_is_structured() -> None:
+    output = StringIO()
+    assert cli.request(StringIO("not-json"), output) == 1
+    assert '"error_id":"SambaAD.InvalidRequest"' in output.getvalue()
+
+
+# A client value that JSON cannot represent stays behind the error boundary.
+def test_response_serialisation_error_is_structured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cli, "dispatch", lambda _request: b"not-json-safe")
+    source = StringIO('{"version":1,"operation":"test","parameters":{}}')
+    output = StringIO()
+    assert cli.request(source, output) == 1
+    assert '"error_id":"SambaAD.BackendFailure"' in output.getvalue()

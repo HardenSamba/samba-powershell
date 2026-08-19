@@ -23,7 +23,7 @@ jobs:
       - name: Validate the module contract
         run: PYTHONPATH=$MK python3 -m modulekit.cli validate .
       - name: Check the coding standard
-        run: PYTHONPATH=$MK python3 -m modulekit.cli lint src
+        run: PYTHONPATH=$MK python3 -m modulekit.cli lint src benchmarks
       - name: Check the coding standard in tests
         run: PYTHONPATH=$MK python3 -m modulekit.norms tests --require-headers --max-functions 50 --max-classes 5
 
@@ -40,3 +40,35 @@ jobs:
         run: mypy --strict src
       - name: Tests
         run: PYTHONPATH=src python3 -m pytest tests -q
+      - name: Measure process transports
+        run: python3 benchmarks/transport.py
+
+  powershell:
+    runs-on: ubuntu-latest
+    container: debian:stable
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the acceptance runtime
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl python3
+          . /etc/os-release
+          curl -fsSLo /tmp/packages-microsoft-prod.deb \
+            "https://packages.microsoft.com/config/debian/${VERSION_ID}/packages-microsoft-prod.deb"
+          dpkg -i /tmp/packages-microsoft-prod.deb
+          apt-get update
+          apt-get install -y --no-install-recommends powershell
+      - name: Validate the module manifest
+        shell: pwsh
+        run: |
+          $manifest = Test-ModuleManifest powershell/SambaAD/SambaAD.psd1
+          if ($manifest.ExportedFunctions.Keys -notcontains 'Get-ADUser') {
+            throw 'Get-ADUser is not exported by the module manifest.'
+          }
+      - name: Test the PowerShell boundary
+        shell: pwsh
+        run: ./tests/test_powershell.ps1 -PythonPath (Get-Command python3).Source
+      - name: Measure PowerShell to Python transports
+        shell: pwsh
+        run: ./benchmarks/transport.ps1 -PythonPath (Get-Command python3).Source
