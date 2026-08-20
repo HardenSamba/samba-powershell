@@ -25,7 +25,7 @@ What is actually in this repository today:
 | A `SambaAD` PowerShell module | The full read and write cmdlet surface |
 | Offline Python and PowerShell boundary tests | Identity forms beyond a distinguished name |
 | A Debian packaging skeleton under `debian/` | A built or published package |
-| Blocking CI checks for the contract, Python and PowerShell surfaces | An `install.sh` and a package build job |
+| A CI workflow on plain Debian, running `mypy --strict` and pytest | An `install.sh`, and any contract or coding standard check in CI |
 | `MODULE.yaml`, declaring the intended surface | A configuration file, or code that reads one |
 
 The first working version is not the full cmdlet set. It is the architecture
@@ -313,7 +313,7 @@ cd samba-powershell
 sudo apt install python3 python3-pytest python3-mypy git \
   python3-yaml python3-jsonschema
 
-python3 -m pytest tests -q        # 15 passed
+python3 -m pytest tests -q        # 16 passed
 mypy --strict src                 # Success: no issues found in 9 source files
 ```
 
@@ -340,13 +340,28 @@ PYTHONPATH=/tmp/mk/src python3 -m modulekit.cli lint src tests
 CI runs on `debian:stable`, never on a HardenSamba image. A test that only
 passes with extra software installed is a defect in the test.
 
-CI gates `modulekit validate`, the coding standard for source and tests,
-`mypy --strict`, pytest, the PowerShell module manifest and the complete
-PowerShell-to-Python boundary test. A Debian-stable job obtains PowerShell from
-Microsoft's repository solely as an acceptance runtime, then records both
-transport measurements. It does not yet build the Debian package or run
-against a live domain; those absences remain explicit acceptance gaps rather
-than green-test claims.
+`.github/workflows/ci.yml` holds one job, `test`. It installs `python3`,
+`python3-pytest` and `mypy` on `debian:stable`, then runs `mypy --strict src`
+and `PYTHONPATH=src python3 -m pytest tests -q`. Both steps fail the job when
+they fail, so a red run means a real failure. What the job does not do is check
+the contract:
+
+- `modulekit validate .` and `modulekit lint` are not run in CI. The contract
+  job that ran the validator has been removed rather than repaired: it cloned
+  `hardensamba-modulekit` anonymously, that repository is private and
+  `GITHUB_TOKEN` is scoped to the repository running the workflow, so the clone
+  failed on every run and the job died before it checked anything.
+- The manifest, the write surface and the coding standard are now verified
+  locally only: by `modulekit` on a developer machine, by the `check-standard`
+  skill in `.claude/skills/` and by the `code-style-auditor` agent in
+  `.claude/agents/`. Both remain normative; nothing on GitHub enforces them.
+  Tracked in
+  [HardenSamba/hardensamba#5](https://github.com/HardenSamba/hardensamba/issues/5).
+
+No check gates a merge in any case. The organisation is on a free plan, where
+private repositories cannot have branch protection or required status checks at
+all, so a green tick has never been a condition of merging here. It means the
+type checker and the three smoke tests passed, and nothing else.
 
 ### Layout
 
@@ -360,7 +375,7 @@ than green-test claims.
 | `benchmarks/` | Required process and Unix-socket transport prototypes |
 | `docs/` | English architecture and behaviour documentation |
 | `debian/` | Packaging. The reference installation method |
-| `.github/workflows/` | CI on plain Debian: contract validation and pytest |
+| `.github/workflows/` | CI on plain Debian: `mypy --strict` and pytest |
 | `.claude/` | Agents and a skill for assisted development |
 
 ### Claude agents
@@ -390,8 +405,9 @@ path to the two `modulekit` checks.
 The coding standard is
 [section 8 of the module contract](https://github.com/HardenSamba/hardensamba-modulekit),
 and it is checked by `modulekit lint`. It is not a review comment you can argue
-with: the rules are mechanical and the checker decides. CI runs the linter, and
-contributors run it locally before committing so failures are found earlier.
+with: the rules are mechanical and the checker decides. CI does not run the
+linter at all, and no longer runs the validator either, so running both before
+a commit is on you.
 
 Three rules surprise people, so they are worth stating up front:
 

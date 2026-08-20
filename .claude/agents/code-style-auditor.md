@@ -22,18 +22,21 @@ that changed. If asked for a full pass, take `src/` and `tests/`.
 
 ## Run the checker first
 
-    modulekit lint src tests
+    modulekit lint src
+    python -m modulekit.norms tests --require-headers --max-functions 50 --max-classes 5
 
 or, if the package is not installed:
 
-    PYTHONPATH=<path-to-modulekit>/src python -m modulekit.cli lint src tests
+    PYTHONPATH=<path-to-modulekit>/src python -m modulekit.cli lint src
+    PYTHONPATH=<path-to-modulekit>/src python -m modulekit.norms tests --require-headers --max-functions 50 --max-classes 5
 
 The checker covers the mechanical rules. Report its output verbatim, then look
 for what it cannot see.
 
 ## What the checker enforces (contract section 8)
 
-- One class and five functions maximum per file.
+- One class and five functions maximum per file. Test files are exempt from
+  the function count, and only from that.
 - Functions of twenty lines or fewer, blank lines excluded.
 - Two levels of nesting at most.
 - Lines of one hundred characters or fewer.
