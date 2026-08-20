@@ -10,7 +10,13 @@ from samba_powershell.client_error import translate_client_error
 from samba_powershell.client_loader import ClientFactory
 from samba_powershell.errors import BackendError
 
-DEFAULT_USER_PROPERTIES = ("distinguishedName", "name", "sAMAccountName")
+# The attribute fetch behind the default property set docs/cmdlets.md decides
+# for Get-ADUser. Enabled is not stored in the directory: it is derived from
+# userAccountControl, which is fetched in its place.
+DEFAULT_USER_PROPERTIES = (
+    "distinguishedName", "givenName", "name", "objectClass", "objectGUID",
+    "sAMAccountName", "objectSid", "sn", "userPrincipalName", "userAccountControl",
+)
 
 
 # Rejects undeclared fields, including credentials that must stay in Kerberos.
@@ -40,6 +46,9 @@ def required_string(parameters: dict[str, object], name: str) -> str:
 
 
 # Reads the requested property names without accepting ambiguous values.
+# -Properties adds to the default set rather than replacing it, which is the
+# decided contract of docs/cmdlets.md and what administrators already expect:
+# on Windows, Get-ADUser -Properties mail returns the default set and mail.
 def requested_properties(parameters: dict[str, object]) -> Sequence[str]:
     value = parameters.get("properties", [])
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
@@ -49,9 +58,10 @@ def requested_properties(parameters: dict[str, object]) -> Sequence[str]:
             "InvalidArgument",
             "properties",
         )
-    if not value:
-        return DEFAULT_USER_PROPERTIES
-    return cast(list[str], value)
+    merged = {name.lower(): name for name in DEFAULT_USER_PROPERTIES}
+    for name in cast(list[str], value):
+        merged.setdefault(name.lower(), name)
+    return tuple(merged.values())
 
 
 # Resolves the endpoint from the request or the caller's environment.

@@ -258,11 +258,13 @@ port = 9389
 # Seconds to wait for a response before the cmdlet gives up.
 timeout = 30
 
-[output]
-# Attributes returned when a cmdlet is called without -Properties.
-# Keeping this list short keeps queries against large directories cheap.
-default_properties = distinguishedName,name,objectClass,sAMAccountName
 ```
+
+The default property set is deliberately not a configuration key. It is the
+decided contract of `docs/cmdlets.md`: the defaults administrators know from
+Windows, with `-Properties` adding to the set rather than replacing it. A knob
+that changes it per machine would make the same script return different columns
+on different controllers.
 
 When configuration becomes real, the file will be marked as a Debian conffile so
 administrator edits survive package upgrades, and every key will be documented
