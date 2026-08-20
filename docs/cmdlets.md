@@ -2,11 +2,28 @@
 
 ## What this document covers
 
-The read cmdlets of ticket #3. The translation, conversion and identity rules
-below are implemented and tested offline, with no directory reachable. The
-search parameters that would carry them to a server are listed as unsupported
-at the end, because the client exposed by `samba-adws` currently offers a read
-by distinguished name and no enumeration. That client API is tracked in
+The read cmdlets of ticket #3. Four are implemented end to end:
+
+| Cmdlet | Returns | Backend operation |
+|---|---|---|
+| `Get-ADUser` | `SambaAD.User` | `get_ad_user` |
+| `Get-ADComputer` | `SambaAD.Computer` | `get_ad_computer` |
+| `Get-ADGroup` | `SambaAD.Group` | `get_ad_group` |
+| `Get-ADObject` | `SambaAD.Object` | `get_ad_object` |
+
+Each takes `-Identity` (a distinguished name — see below), `-Server` (or the
+`SAMBA_AD_SERVER` environment variable) and `-Properties`. Each returns a typed
+object the format file renders as a table, and each writes a non-terminating
+`ErrorRecord` on failure so a pipeline under `-ErrorAction SilentlyContinue`
+continues. A cmdlet given an object of another class — `Get-ADUser` on a group —
+reports `SambaAD.ObjectNotFound`, the way Windows reports it, rather than
+finding the object and complaining about its type.
+
+The translation, conversion and identity rules below are implemented and tested
+offline, with no directory reachable. The search parameters that would carry
+them to a server are listed as unsupported at the end, because the client
+exposed by `samba-adws` currently offers a read by distinguished name and no
+enumeration. That client API is tracked in
 [samba-adws#7](https://github.com/HardenSamba/samba-adws/issues/7).
 
 ## Where values are converted
@@ -29,6 +46,15 @@ are already typed. The PowerShell half formats; it does not decode.
 
 A GUID cannot travel as text: the directory stores it little-endian, so the
 filter carries the byte sequence rather than the printed form.
+
+**Live, only the distinguished name form reaches the wire.** The other three
+forms require matching a filter against the directory, which needs the
+enumeration the supported client does not offer yet. A cmdlet given a
+sAMAccountName, SID or GUID identity refuses with
+`SambaAD.IdentityNotResolvable` and says to give a distinguished name — a
+stated gap rather than an enumeration that silently does not happen. The
+classification and the filters each form implies are implemented and tested,
+so resolution lights up when the client gains enumeration.
 
 When an identity matches nothing, the cmdlet writes a non-terminating
 `ErrorRecord` whose `FullyQualifiedErrorId` is `SambaAD.ObjectNotFound` and
@@ -109,6 +135,22 @@ not replace it, which is the behaviour administrators already expect.
 Constructed attributes such as `tokenGroups` and `canonicalName` are computed
 by the server and returned only when asked for by name. They do not appear
 under `-Properties *`.
+
+How the answer is rendered, in Python, before it crosses the JSON boundary:
+
+- The default set's attributes appear under their PowerShell names —
+  `sn` as `Surname`, `objectSid` as `SID`, `dNSHostName` as `DNSHostName`.
+  An extra attribute asked for by name keeps its LDAP display name, which is
+  what Windows does with `-Properties mail`.
+- `Enabled`, `GroupCategory` and `GroupScope` are derived from
+  `userAccountControl` and `groupType`, which are fetched in their place and
+  shown raw only when asked for by name.
+- `objectClass` reduces to the class the object is: the directory returns the
+  hierarchy from `top` downwards, and the last value is the object's own class.
+- `objectGUID` and `objectSid` are decoded from their binary forms; any other
+  binary value is base64 text rather than a decode guess.
+- Multi-valued attributes are lists. Everything in the rendered object survives
+  JSON, because JSON is the channel it crosses to PowerShell.
 
 ## Not supported yet
 

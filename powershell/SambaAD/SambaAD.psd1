@@ -8,7 +8,7 @@
     Description = 'Active Directory administration cmdlets for Samba AD.'
     PowerShellVersion = '7.4'
     CompatiblePSEditions = @('Core')
-    FunctionsToExport = @('Get-ADUser')
+    FunctionsToExport = @('Get-ADUser', 'Get-ADComputer', 'Get-ADGroup', 'Get-ADObject')
     CmdletsToExport = @()
     VariablesToExport = @()
     AliasesToExport = @()

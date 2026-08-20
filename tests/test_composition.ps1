@@ -41,18 +41,21 @@ try {
     if ($user.Name -ne [char]0x41 + 'nn' + [char]0xE9 + 'e') {
         throw "The UTF-8 boundary corrupted a non-ASCII value: $($user.Name)"
     }
-    if ($user.Server -ne 'dc1') {
+    if ($user.adwsServer -ne 'dc1') {
         throw 'The real backend did not pass -Server through to the client.'
     }
+    if ($user.Enabled -ne $true) {
+        throw 'The renderer did not derive Enabled from userAccountControl.'
+    }
     $captured = @()
-    Get-ADUser -Identity missing -Server dc1 -ErrorAction SilentlyContinue `
+    Get-ADUser -Identity 'CN=Missing,CN=Users,DC=example,DC=com' -Server dc1 -ErrorAction SilentlyContinue `
         -ErrorVariable captured
     if (
         $captured.Count -ne 1 -or
         [string]::IsNullOrEmpty($captured[0].FullyQualifiedErrorId) -or
         $captured[0].FullyQualifiedErrorId -notlike 'SambaAD.ObjectNotFound*' -or
         $captured[0].CategoryInfo.Category -ne 'ObjectNotFound' -or
-        $captured[0].TargetObject -ne 'missing' -or
+        $captured[0].TargetObject -ne 'CN=Missing,CN=Users,DC=example,DC=com' -or
         $captured[0].ToString() -match 'Traceback'
     ) {
         throw 'The real backend did not produce a structured ErrorRecord.'

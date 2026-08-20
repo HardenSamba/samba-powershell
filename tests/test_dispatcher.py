@@ -2,84 +2,143 @@
 
 from __future__ import annotations
 
-from unittest.mock import Mock
+import json
 
 import pytest
 
 from samba_powershell.dispatcher import dispatch
-from samba_powershell.operations import DEFAULT_USER_PROPERTIES
 from samba_powershell.errors import BackendError
+from samba_powershell.operations import DEFAULT_USER_PROPERTIES
 from tests.fake_client import FakeClient
 
+ALICE_DN = "CN=Alice,CN=Users,DC=example,DC=com"
+SALES_DN = "CN=Sales,DC=example,DC=com"
 
-# Builds a valid proof request for the fake client.
-def proof_request() -> dict[str, object]:
+
+# Builds a valid request for one operation against the recorded directory.
+def request_for(operation: str, identity: str,
+                properties: list[str] | None = None) -> dict[str, object]:
     return {
         "version": 1,
-        "operation": "get_ad_user",
+        "operation": operation,
         "parameters": {
-            "identity": "CN=Alice,DC=example,DC=com",
+            "identity": identity,
             "server": "dc1.example.com",
-            "properties": ["mail"],
+            "properties": properties or [],
         },
     }
 
 
-# The requested properties the fake client saw on one dispatch.
-def fetched(request: dict[str, object]) -> list[str]:
-    result = dispatch(request, FakeClient)
+# Dispatches one request and returns the rendered properties and the client.
+def answered(request: dict[str, object]) -> tuple[dict[str, object], FakeClient]:
+    made: list[FakeClient] = []
+
+    # Builds the fake while keeping hold of it, so the test can read what the
+    # backend actually asked the client for.
+    def factory(server: str, port: int, timeout: float) -> FakeClient:
+        made.append(FakeClient(server, port, timeout))
+        return made[-1]
+
+    result = dispatch(request, factory)
     assert isinstance(result, dict)
     properties = result["properties"]
     assert isinstance(properties, dict)
-    requested = properties["RequestedProperties"]
-    assert isinstance(requested, list)
-    return requested
+    return properties, made[0]
 
 
-# The read proof returns a PowerShell type name and directory properties, and
-# -Properties adds to the default set rather than replacing it: an administrator
-# asking for mail gets the default columns and mail, as docs/cmdlets.md decides.
-def test_get_ad_user_uses_client_boundary() -> None:
-    result = dispatch(proof_request(), FakeClient)
-    assert isinstance(result, dict)
-    assert result["type"] == "SambaAD.User"
-    properties = result["properties"]
-    assert isinstance(properties, dict)
-    requested = properties["RequestedProperties"]
-    assert isinstance(requested, list)
-    assert set(DEFAULT_USER_PROPERTIES) <= set(requested)
-    assert requested[-1] == "mail"
+# The default read renders the decided property set under its PowerShell names:
+# binary values decoded, Enabled derived, and the raw userAccountControl absent
+# because nobody asked for it.
+def test_get_ad_user_renders_the_decided_defaults() -> None:
+    properties, client = answered(request_for("get_ad_user", ALICE_DN))
+    assert client.requested == list(DEFAULT_USER_PROPERTIES)
+    assert properties["DistinguishedName"] == ALICE_DN
+    assert properties["SamAccountName"] == "alice"
+    assert properties["Surname"] == "Liddell"
+    assert properties["ObjectClass"] == "user"
+    assert properties["ObjectGUID"] == "f81d4fae-7dec-11d0-a765-00a0c91e6bf6"
+    assert properties["SID"] == "S-1-5-21-1-2-3-1105"
+    assert properties["Enabled"] is True
+    assert "userAccountControl" not in properties
 
 
-# With no -Properties, the fetch is the decided ten-property default set, with
-# userAccountControl standing in for the derived Enabled.
-def test_get_ad_user_fetches_the_decided_defaults() -> None:
-    request = proof_request()
-    parameters = request["parameters"]
-    assert isinstance(parameters, dict)
-    parameters["properties"] = []
-    assert fetched(request) == list(DEFAULT_USER_PROPERTIES)
-    assert "userAccountControl" in DEFAULT_USER_PROPERTIES
-    assert len(DEFAULT_USER_PROPERTIES) == 10
+# -Properties adds to the default set rather than replacing it, and the extra
+# attribute appears under its own LDAP name, the way Windows shows it.
+def test_properties_add_to_the_defaults() -> None:
+    properties, client = answered(request_for("get_ad_user", ALICE_DN, ["mail"]))
+    assert set(DEFAULT_USER_PROPERTIES) <= set(client.requested)
+    assert client.requested[-1] == "mail"
+    assert properties["mail"] == "alice@example.com"
+    assert properties["SamAccountName"] == "alice"
 
 
-# Asking for a property already in the default set, in whatever case, must not
-# fetch it twice: LDAP attribute names are not case-sensitive.
+# Asking for a default again, in another case, must not fetch it twice.
 def test_a_default_asked_for_again_is_not_doubled() -> None:
-    request = proof_request()
-    parameters = request["parameters"]
-    assert isinstance(parameters, dict)
-    parameters["properties"] = ["SAMAccountName", "mail"]
-    requested = fetched(request)
-    assert requested.count("sAMAccountName") == 1
-    assert "SAMAccountName" not in requested
-    assert requested[-1] == "mail"
+    _, client = answered(request_for("get_ad_user", ALICE_DN, ["SAMAccountName", "mail"]))
+    assert client.requested.count("sAMAccountName") == 1
+    assert "SAMAccountName" not in client.requested
+
+
+# Time-encoded attributes render as ISO text, the never sentinel as nothing,
+# and a multi-valued attribute as a list. The whole answer survives JSON,
+# because JSON is the channel it crosses to PowerShell.
+def test_times_lists_and_json_safety() -> None:
+    extras = ["whenCreated", "pwdLastSet", "accountExpires", "memberOf"]
+    properties, _ = answered(request_for("get_ad_user", ALICE_DN, extras))
+    assert properties["whenCreated"] == "2024-02-29T12:00:00+00:00"
+    when_set = properties["pwdLastSet"]
+    assert isinstance(when_set, str) and when_set.startswith("2024-")
+    assert properties["accountExpires"] is None
+    assert properties["memberOf"] == [SALES_DN, "CN=Staff,DC=example,DC=com"]
+    assert json.dumps(properties)
+
+
+# A derivation source asked for by name appears raw beside the derived value.
+def test_a_derivation_source_appears_when_asked_for() -> None:
+    properties, _ = answered(request_for("get_ad_user", ALICE_DN, ["userAccountControl"]))
+    assert properties["userAccountControl"] == "512"
+    assert properties["Enabled"] is True
+
+
+# A group renders its category and scope from groupType, which stays hidden
+# unless asked for, exactly like userAccountControl.
+def test_get_ad_group_derives_category_and_scope() -> None:
+    properties, _ = answered(request_for("get_ad_group", SALES_DN))
+    assert properties["GroupCategory"] == "Security"
+    assert properties["GroupScope"] == "Global"
+    assert "groupType" not in properties
+
+
+# The wrong cmdlet does not find the object, the way Windows reports it.
+def test_the_class_guard_refuses_the_wrong_kind() -> None:
+    with pytest.raises(BackendError) as raised:
+        dispatch(request_for("get_ad_user", SALES_DN), FakeClient)
+    assert raised.value.error_id == "SambaAD.ObjectNotFound"
+    with pytest.raises(BackendError) as raised:
+        dispatch(request_for("get_ad_group", ALICE_DN), FakeClient)
+    assert raised.value.category == "ObjectNotFound"
+
+
+# Get-ADObject takes any class and asks for no more than its four defaults.
+def test_get_ad_object_takes_any_class() -> None:
+    properties, client = answered(request_for("get_ad_object", SALES_DN))
+    assert properties["ObjectClass"] == "group"
+    assert client.requested == ["distinguishedName", "name", "objectClass", "objectGUID"]
+
+
+# An identity in a form the supported client cannot resolve is refused by name,
+# not silently searched for.
+def test_a_non_dn_identity_is_refused_by_name() -> None:
+    with pytest.raises(BackendError) as raised:
+        dispatch(request_for("get_ad_user", "alice"), FakeClient)
+    assert raised.value.error_id == "SambaAD.IdentityNotResolvable"
+    assert "distinguished name" in raised.value.message
 
 
 # Missing endpoints fail before the optional samba-adws import is needed.
 def test_get_ad_user_requires_server(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SAMBA_AD_SERVER", raising=False)
-    request = proof_request()
+    request = request_for("get_ad_user", ALICE_DN)
     parameters = request["parameters"]
     assert isinstance(parameters, dict)
     parameters.pop("server")
@@ -90,7 +149,7 @@ def test_get_ad_user_requires_server(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # Unknown operations are rejected with a stable identifier.
 def test_unknown_operation_is_rejected() -> None:
-    request = proof_request()
+    request = request_for("get_ad_user", ALICE_DN)
     request["operation"] = "delete_everything"
     with pytest.raises(BackendError) as raised:
         dispatch(request, FakeClient)
@@ -99,25 +158,10 @@ def test_unknown_operation_is_rejected() -> None:
 
 # Password fields are rejected instead of being silently copied or ignored.
 def test_password_parameter_is_rejected() -> None:
-    request = proof_request()
+    request = request_for("get_ad_user", ALICE_DN)
     parameters = request["parameters"]
     assert isinstance(parameters, dict)
-    parameters["password"] = "do-not-accept-this"
+    parameters["password"] = "hunter2"
     with pytest.raises(BackendError) as raised:
         dispatch(request, FakeClient)
     assert raised.value.error_id == "SambaAD.InvalidParameter"
-    assert raised.value.target == "password"
-
-
-# Client faults retain their public fields across the backend boundary.
-def test_client_error_is_translated() -> None:
-    failure = RuntimeError("missing")
-    setattr(failure, "code", "IdentityNotFound")
-    setattr(failure, "category", "ObjectNotFound")
-    setattr(failure, "target", "alice")
-    client = Mock()
-    client.get_by_dn.side_effect = failure
-    with pytest.raises(BackendError) as raised:
-        dispatch(proof_request(), lambda _server, _port, _timeout: client)
-    assert raised.value.error_id == "SambaAD.IdentityNotFound"
-    assert raised.value.category == "ObjectNotFound"

@@ -98,6 +98,45 @@ function New-SambaADErrorRecord {
     )
 }
 
+# Runs one read operation and emits the typed object, or the backend's error.
+function Invoke-SambaADRead {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [System.Management.Automation.PSCmdlet]$Caller,
+
+        [Parameter(Mandatory)]
+        [string]$Operation,
+
+        [Parameter(Mandatory)]
+        [string]$Identity,
+
+        [Parameter()]
+        [string]$Server = '',
+
+        [Parameter()]
+        [string[]]$Properties = @()
+    )
+
+    $request = @{
+        version = 1
+        operation = $Operation
+        parameters = @{
+            identity = $Identity
+            server = $Server
+            properties = $Properties
+        }
+    }
+    $response = Invoke-SambaADBackend -Request $request
+    if (-not $response.ok) {
+        $Caller.WriteError((New-SambaADErrorRecord $response.error))
+        return
+    }
+    $result = [pscustomobject]$response.result.properties
+    $result.PSObject.TypeNames.Insert(0, [string]$response.result.type)
+    Write-Output $result
+}
+
 # Retrieves one user by distinguished name through the Samba ADWS endpoint.
 function Get-ADUser {
     [CmdletBinding()]
@@ -114,24 +153,77 @@ function Get-ADUser {
     )
 
     process {
-        $request = @{
-            version = 1
-            operation = 'get_ad_user'
-            parameters = @{
-                identity = $Identity
-                server = $Server
-                properties = $Properties
-            }
-        }
-        $response = Invoke-SambaADBackend -Request $request
-        if (-not $response.ok) {
-            $PSCmdlet.WriteError((New-SambaADErrorRecord $response.error))
-            return
-        }
-        $result = [pscustomobject]$response.result.properties
-        $result.PSObject.TypeNames.Insert(0, [string]$response.result.type)
-        Write-Output $result
+        Invoke-SambaADRead -Caller $PSCmdlet -Operation 'get_ad_user' `
+            -Identity $Identity -Server $Server -Properties $Properties
     }
 }
 
-Export-ModuleMember -Function @('Get-ADUser')
+# Retrieves one computer by distinguished name through the Samba ADWS endpoint.
+function Get-ADComputer {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, Position = 0, ValueFromPipeline)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Identity,
+
+        [Parameter()]
+        [string]$Server = $env:SAMBA_AD_SERVER,
+
+        [Parameter()]
+        [string[]]$Properties = @()
+    )
+
+    process {
+        Invoke-SambaADRead -Caller $PSCmdlet -Operation 'get_ad_computer' `
+            -Identity $Identity -Server $Server -Properties $Properties
+    }
+}
+
+# Retrieves one group by distinguished name through the Samba ADWS endpoint.
+function Get-ADGroup {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, Position = 0, ValueFromPipeline)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Identity,
+
+        [Parameter()]
+        [string]$Server = $env:SAMBA_AD_SERVER,
+
+        [Parameter()]
+        [string[]]$Properties = @()
+    )
+
+    process {
+        Invoke-SambaADRead -Caller $PSCmdlet -Operation 'get_ad_group' `
+            -Identity $Identity -Server $Server -Properties $Properties
+    }
+}
+
+# Retrieves one object of any class by distinguished name.
+function Get-ADObject {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, Position = 0, ValueFromPipeline)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Identity,
+
+        [Parameter()]
+        [string]$Server = $env:SAMBA_AD_SERVER,
+
+        [Parameter()]
+        [string[]]$Properties = @()
+    )
+
+    process {
+        Invoke-SambaADRead -Caller $PSCmdlet -Operation 'get_ad_object' `
+            -Identity $Identity -Server $Server -Properties $Properties
+    }
+}
+
+Export-ModuleMember -Function @(
+    'Get-ADUser',
+    'Get-ADComputer',
+    'Get-ADGroup',
+    'Get-ADObject'
+)

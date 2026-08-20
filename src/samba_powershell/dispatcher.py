@@ -6,7 +6,19 @@ from typing import cast
 
 from samba_powershell.client_loader import ClientFactory, load_client_factory
 from samba_powershell.errors import BackendError
-from samba_powershell.operations import get_ad_user
+from samba_powershell.operations import (
+    get_ad_computer,
+    get_ad_group,
+    get_ad_object,
+    get_ad_user,
+)
+
+OPERATIONS = {
+    "get_ad_user": get_ad_user,
+    "get_ad_computer": get_ad_computer,
+    "get_ad_group": get_ad_group,
+    "get_ad_object": get_ad_object,
+}
 
 
 # Routes a validated request to its directory operation.
@@ -16,12 +28,13 @@ def dispatch(
 ) -> object:
     operation = cast(str, request["operation"])
     parameters = cast(dict[str, object], request["parameters"])
-    if operation == "get_ad_user":
-        factory = client_factory or load_client_factory()
-        return get_ad_user(parameters, factory)
-    raise BackendError(
-        f"Operation '{operation}' is not supported.",
-        "SambaAD.UnsupportedOperation",
-        "NotImplemented",
-        operation,
-    )
+    handler = OPERATIONS.get(operation)
+    if handler is None:
+        raise BackendError(
+            f"Operation '{operation}' is not supported.",
+            "SambaAD.UnsupportedOperation",
+            "NotImplemented",
+            operation,
+        )
+    factory = client_factory or load_client_factory()
+    return handler(parameters, factory)

@@ -24,13 +24,16 @@ class ADWSClient:
         self.port = port
         self.timeout = timeout
 
-    # Returns one object, or raises the typed not-found failure.
+    # Returns one object, or raises the typed not-found failure. The answer
+    # carries the shapes a directory answers with: an objectClass hierarchy,
+    # a non-ASCII value to prove the UTF-8 boundary, and the server echoed
+    # back so composition can see -Server arrive.
     def get_by_dn(
         self,
         identity: str,
         properties: Sequence[str] = (),
     ) -> Mapping[str, object]:
-        if identity == "missing":
+        if "missing" in identity.lower():
             raise StubClientError(
                 "The directory object was not found.",
                 "ObjectNotFound",
@@ -38,8 +41,10 @@ class ADWSClient:
                 identity,
             )
         return {
-            "DistinguishedName": identity,
-            "Name": "Année",
-            "Server": self.server,
-            "RequestedProperties": list(properties),
+            "distinguishedName": identity,
+            "name": "Année",
+            "objectClass": ("top", "person", "organizationalPerson", "user"),
+            "userAccountControl": "512",
+            "adwsServer": self.server,
+            "requestedCount": str(len(list(properties))),
         }
