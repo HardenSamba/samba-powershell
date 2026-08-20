@@ -13,15 +13,17 @@ speaking to a Samba domain controller.
 
 ## Status
 
-**Scaffold. Nothing works yet.** Do not install this expecting cmdlets.
+**Architecture proof in progress.** The process boundary and one `Get-ADUser`
+surface now exist, but the live proof still depends on the client API tracked
+in `samba-adws#7`. Do not treat this branch as a packaged release.
 
 What is actually in this repository today:
 
 | Present | Absent |
 |---|---|
-| A Python package `samba_powershell` | Any PowerShell module |
-| A CLI entry point that prints `not implemented yet` | Any cmdlet |
-| Three smoke tests (package imports, `--version`, `status` runs) | Any connection to `samba-adws` |
+| A typed Python backend and JSON envelope | A completed live-domain proof |
+| A `SambaAD` PowerShell module | The full read and write cmdlet surface |
+| Offline Python and PowerShell boundary tests | Identity forms beyond a distinguished name |
 | A Debian packaging skeleton under `debian/` | A built or published package |
 | A CI workflow on plain Debian, running `mypy --strict` and pytest | An `install.sh`, and any contract or coding standard check in CI |
 | `MODULE.yaml`, declaring the intended surface | A configuration file, or code that reads one |
@@ -41,10 +43,13 @@ with tab completion.
 
 ## What it does
 
-Today it prints that it is not implemented. Everything below is future tense and
-none of it is built.
+The architecture proof now provides a real PowerShell module, a versioned JSON
+process boundary and one `Get-ADUser` path for a distinguished name. Its
+directory adapter imports the public client being built in `samba-adws#7`; the
+offline boundary is tested, while the live-domain acceptance run remains to be
+recorded.
 
-The module **will** provide:
+The completed module will provide:
 
 - **Read cmdlets.** `Get-ADUser`, `Get-ADComputer`, `Get-ADGroup`,
   `Get-ADObject`, `Get-ADDomain` and the surrounding query surface. These cover
@@ -134,7 +139,7 @@ Until then, that command fails with `Unable to locate package`.
 
 ### From source
 
-This works today, and gets you the scaffold.
+This works today and runs the architecture-proof backend from a checkout.
 
 ```bash
 git clone https://github.com/HardenSamba/samba-powershell.git
@@ -144,18 +149,9 @@ cd samba-powershell
 PYTHONPATH=src python3 -m samba_powershell.cli status
 ```
 
-To build and install the Debian package from the checkout:
-
-```bash
-sudo apt install devscripts debhelper dh-python python3-all python3-setuptools
-dpkg-buildpackage -us -uc -b
-sudo apt install ../samba-powershell_0.1.0-1_all.deb
-```
-
-That path is written from `debian/control` and `debian/changelog`, which give
-the package name and the `0.1.0-1` version in the filename. It is not exercised
-anywhere: the CI workflow has no build job, and no package has been produced
-from it yet. Treat it as the intended route rather than a tested one.
+The packaging skeleton is not yet a supported installation path. Its final
+module location, conffiles and clean purge behaviour belong to ticket #5, so
+do not infer installability from the presence of `debian/`.
 
 The ecosystem contract also expects an `install.sh` at the repository root, for
 manual installation on a Debian or Ubuntu system without the archive. This
@@ -163,47 +159,60 @@ repository does not carry one yet.
 
 ## Usage
 
-### What runs today
+### Backend status
 
 ```console
 $ PYTHONPATH=src python3 -m samba_powershell.cli status
-samba-powershell: not implemented yet
+samba-ad-backend: ready
 ```
 
-That is the whole of it. The exit code is 0, which is deliberate: the command
-succeeded at reporting that there is nothing to report.
+This is a local startup check only. It deliberately performs no network or
+directory work; `Get-ADUser` exercises the request path described below.
 
 ```console
 $ PYTHONPATH=src python3 -m samba_powershell.cli --help
-usage: Import-Module [-h] [--version] {status} ...
+usage: samba-ad-backend [-h] [--version] {request,status} ...
 
-PowerShell on Linux for Samba Active Directory administration.
+PowerShell backend for Samba Active Directory administration.
 
 positional arguments:
-  {status}
-    status    report what this module currently sees
+  {request,status}
+    request         read one JSON request from standard input
+    status          report whether the backend can start
 
 options:
   -h, --help  show this help message and exit
   --version   show program's version number and exit
 ```
 
-The `usage:` line reads `Import-Module` because `src/samba_powershell/cli.py`
-passes `prog="Import-Module"` to the argument parser. `pyproject.toml` declares
-the same string as its console script name, and `MODULE.yaml` declares the
-command as `Import-Module SambaAD`. All three are scaffold artefacts.
-`Import-Module` is a PowerShell keyword, not a shell command, and the naming
-will be corrected when the real cmdlet surface lands.
+`Import-Module` remains a PowerShell command. The installed Python executable
+is deliberately named `samba-ad-backend` and is an internal process boundary,
+not an imitation shell command.
 
-### What is planned
+### PowerShell architecture proof
 
-**None of the following works. It is shown so the target is visible.**
+With `samba-ad-backend` on `PATH`, the `samba-adws#7` client available and a
+Kerberos ticket for the calling user, the implemented proof from a checkout is:
 
 ```powershell
-# Planned, not implemented
+$env:PSModulePath = (Join-Path $PWD 'powershell') + `
+  [IO.Path]::PathSeparator + $env:PSModulePath
+$env:SAMBA_AD_SERVER = 'dc1.example.com'
 Import-Module SambaAD
 
-Get-ADUser -Identity jdoe
+Get-ADUser `
+  -Identity 'CN=Jane Doe,OU=Staff,DC=example,DC=com' `
+  -Server $env:SAMBA_AD_SERVER
+```
+
+For an offline checkout proof that creates its own temporary backend wrapper
+and module path, run `pwsh -NoProfile -File tests/test_powershell.ps1
+-PythonPath "$(command -v python3)"` from Bash.
+
+The remaining identity forms, filters, paging and write surface belong to the
+next two tickets. Their target syntax is:
+
+```powershell
 Get-ADUser -Filter 'Name -like "j*"' -Properties mail,memberOf
 Get-ADGroupMember -Identity 'Domain Admins' -Recursive
 
@@ -213,9 +222,13 @@ Set-ADAccountPassword -Identity jdoe -Reset
 Remove-ADUser -Identity jdoe -WhatIf
 ```
 
-Authentication will follow the transport: Kerberos through the existing ticket
-cache, with the directory enforcing the rights of the calling principal. The
-module will not carry a permission model of its own.
+Authentication follows the transport through the caller's existing Kerberos
+ticket cache. The module will not carry a permission model of its own. The
+server must enforce the calling principal's directory rights, but it currently
+uses a SYSTEM `SamDB` session; that security blocker is tracked in
+[`samba-adws#8`](https://github.com/HardenSamba/samba-adws/issues/8). No write
+surface is considered safe or complete until that issue has a live allow/deny
+proof.
 
 ## Configuration
 
@@ -300,8 +313,8 @@ cd samba-powershell
 sudo apt install python3 python3-pytest python3-mypy git \
   python3-yaml python3-jsonschema
 
-python3 -m pytest tests -q        # 3 passed
-mypy --strict src                 # Success: no issues found in 2 source files
+python3 -m pytest tests -q        # 16 passed
+mypy --strict src                 # Success: no issues found in 9 source files
 ```
 
 `python3-yaml` and `python3-jsonschema` are there for `modulekit`, which needs
@@ -311,7 +324,9 @@ Both contract checks must pass before a commit, and both pass today:
 
 ```bash
 modulekit validate .              # the manifest and the write surface
-modulekit lint src tests          # the coding standard, section 8
+modulekit lint src benchmarks     # production and benchmark Python
+python3 -m modulekit.norms tests --require-headers \
+  --max-functions 50 --max-classes 5
 ```
 
 If `modulekit` is not installed, run it from a checkout:
@@ -354,9 +369,11 @@ type checker and the three smoke tests passed, and nothing else.
 |---|---|
 | `MODULE.yaml` | The manifest. Authoritative for dependencies and the write surface |
 | `CLAUDE.md` | Project instructions, restating the parts of the contract that bind here |
-| `src/samba_powershell/` | The Python package: `__init__.py` and `cli.py` |
-| `tests/` | Smoke tests, runnable without the rest of the ecosystem |
-| `docs/` | Documentation, English. Where `architecture.md` will land |
+| `src/samba_powershell/` | Typed Python backend and lazy ADWS client adapter |
+| `powershell/SambaAD/` | Module manifest, cmdlet surface and format data |
+| `tests/` | Offline Python and PowerShell boundary tests |
+| `benchmarks/` | Required process and Unix-socket transport prototypes |
+| `docs/` | English architecture and behaviour documentation |
 | `debian/` | Packaging. The reference installation method |
 | `.github/workflows/` | CI on plain Debian: `mypy --strict` and pytest |
 | `.claude/` | Agents and a skill for assisted development |

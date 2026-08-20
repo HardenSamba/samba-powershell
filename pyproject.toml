@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]
-Import-Module = "samba_powershell.cli:main"
+samba-ad-backend = "samba_powershell.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

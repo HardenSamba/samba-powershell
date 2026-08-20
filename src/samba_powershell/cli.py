@@ -1,31 +1,78 @@
-"""Command line entry point."""
+"""Command line entry point for the PowerShell backend."""
 
 from __future__ import annotations
 
 import argparse
+import io
 import sys
+import traceback
+from typing import TextIO
 
 from samba_powershell import __version__
+from samba_powershell.dispatcher import dispatch
+from samba_powershell.errors import BackendError
+from samba_powershell.protocol import (
+    failure_response,
+    read_request,
+    success_response,
+    validate_request,
+    write_response,
+)
+
+
+# Builds the backend command-line parser.
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="samba-ad-backend",
+        description="PowerShell backend for Samba Active Directory administration.",
+    )
+    parser.add_argument("--version", action="version", version=__version__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("request", help="read one JSON request from standard input")
+    sub.add_parser("status", help="report whether the backend can start")
+    return parser
 
 
 # Parses arguments and dispatches to a subcommand.
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="Import-Module",
-        description="PowerShell on Linux for Samba Active Directory administration.",
-    )
-    parser.add_argument("--version", action="version", version=__version__)
-    sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("status", help="report what this module currently sees")
-    args = parser.parse_args(argv)
+    args = build_parser().parse_args(argv)
+    if args.command == "request":
+        return request(utf8_stream(sys.stdin), utf8_stream(sys.stdout))
     if args.command == "status":
         return status()
     return 1
 
 
-# Reports the module state. Replaced as the module grows.
+# Pins the protocol channel to UTF-8 so it never depends on the caller locale.
+def utf8_stream(stream: TextIO) -> TextIO:
+    if isinstance(stream, io.TextIOWrapper):
+        stream.reconfigure(encoding="utf-8", errors="strict")
+    return stream
+
+
+# Handles one request without allowing exceptions onto the JSON channel.
+def request(input_stream: TextIO, output_stream: TextIO) -> int:
+    try:
+        payload = success_response(dispatch(validate_request(read_request(input_stream))))
+        write_response(payload, output_stream)
+    except BackendError as exc:
+        write_response(failure_response(exc), output_stream)
+        return 1
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        write_response(
+            failure_response(
+                BackendError("The backend failed.", "SambaAD.BackendFailure")
+            ),
+            output_stream,
+        )
+        return 1
+    return 0
+
+
+# Reports that the local backend process can start.
 def status() -> int:
-    print("samba-powershell: not implemented yet")
+    print("samba-ad-backend: ready")
     return 0
 
 

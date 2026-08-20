@@ -8,6 +8,6 @@ Rules-Requires-Root: no
 
 Package: samba-powershell
 Architecture: all
-Depends: ${python3:Depends}, ${misc:Depends}, powershell
+Depends: ${python3:Depends}, ${misc:Depends}, powershell, samba-adws
 Description: PowerShell on Linux for Samba Active Directory administration.
  Provides the Active Directory cmdlets on Linux, so a domain can be administered from a terminal without a Windows workstation.
