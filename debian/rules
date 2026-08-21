@@ -1,6 +1,22 @@
 #!/usr/bin/make -f
 
-export PYBUILD_NAME=$(shell dh_listpackages)
+# The importable Python package, so pybuild finds src/samba_powershell, and the
+# build system, which pybuild does not always detect from pyproject.toml alone.
+export PYBUILD_NAME = samba_powershell
+export PYBUILD_SYSTEM = pyproject
+
+MODULE_DIR = debian/samba-powershell/usr/share/samba-powershell/SambaAD
+PROFILE_DIR = debian/samba-powershell/etc/profile.d
 
 %:
 	dh $@ --with python3 --buildsystem=pybuild
+
+# pybuild ships the Python backend and the samba-ad-backend console script; the
+# PowerShell module is not Python and has to be placed by hand, where pwsh is
+# told to look, or the package installs nothing importable as SambaAD.
+override_dh_auto_install:
+	dh_auto_install
+	mkdir -p $(MODULE_DIR)
+	cp -a powershell/SambaAD/. $(MODULE_DIR)/
+	mkdir -p $(PROFILE_DIR)
+	install -m 0644 debian/psmodulepath.sh $(PROFILE_DIR)/samba-powershell.sh
