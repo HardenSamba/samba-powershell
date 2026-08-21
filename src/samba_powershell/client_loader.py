@@ -13,10 +13,12 @@ ClientFactory = Callable[[str, int, float], DirectoryClient]
 
 
 # Loads the optional samba-adws client only when a command reaches the network.
+# Prefers the read-write ADWSWriteClient; an older read-only samba-adws yields
+# ADWSClient, so a write then refuses cleanly through write_ops rather than here.
 def load_client_factory() -> ClientFactory:
     try:
-        module = importlib.import_module("samba_adws.client")
-        candidate = getattr(module, "ADWSClient")
+        module = importlib.import_module("samba_adws")
+        candidate = getattr(module, "ADWSWriteClient", None) or getattr(module, "ADWSClient")
     except (ImportError, AttributeError) as exc:
         raise BackendError(
             "The samba-adws client API is not installed.",

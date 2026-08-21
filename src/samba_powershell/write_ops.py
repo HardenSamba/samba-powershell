@@ -8,8 +8,9 @@ from samba_powershell.errors import BackendError
 
 ADWS_PORT = 9389
 ADWS_TIMEOUT = 30.0
-# The client methods a write needs. The supported client has none of them yet,
-# so a write refuses by name rather than mutating nothing and reporting success.
+# The client methods a write needs. A current samba-adws exposes them through
+# ADWSWriteClient; a refusal by name means an older read-only client is installed
+# rather than a write that mutated nothing and reported success.
 WRITE_METHODS = ("create", "modify", "delete", "set_password", "rename")
 
 
@@ -17,8 +18,9 @@ WRITE_METHODS = ("create", "modify", "delete", "set_password", "rename")
 def _unavailable(method: str) -> BackendError:
     return BackendError(
         f"The samba-adws client cannot {method}: it exposes read access only. "
-        "Writing needs a client operation samba-adws does not offer yet, and the "
-        "authorization fix tracked in samba-adws#8. See docs/writing.md.",
+        "Install a samba-adws that provides ADWSWriteClient (the write verbs from "
+        "samba-adws#16, with the authorization fix of samba-adws#8). See "
+        "docs/writing.md.",
         "SambaAD.WriteNotAvailable", "NotImplemented", method)
 
 

@@ -8,25 +8,29 @@ The counterparts to the read cmdlets: `New-ADUser`, `New-ADGroup`,
 
 ## The state of the wire, stated first
 
-**No write reaches a directory yet, and that is a limit of `samba-adws`, not of
-this module.** The supported `samba_adws` client exposes `get_by_dn` only — no
-create, modify, delete or set-password. Every write here is built and tested, and
-every write refuses at run time with `SambaAD.WriteNotAvailable` until the client
-gains the operation it needs. `samba-adws` also carries an authorization caveat
-(its server runs directory operations as SYSTEM, tracked in samba-adws#8) that
-must be resolved before writes are trusted against anything but a lab.
+**Writes now reach the directory.** `samba-adws` exposes the write verbs on
+`ADWSWriteClient` (samba-adws#16), and its server binds each request to the
+caller's authenticated identity instead of running as SYSTEM (samba-adws#8). This
+module loads `ADWSWriteClient` when it is present (`client_loader.py`), so a write
+is carried out under the operator's own directory rights.
 
-So this ticket delivers the whole write surface — the cmdlets, the confirmation
-behaviour, the password handling, the fault mapping and the idempotency rules —
-against the point where it plugs into `samba-adws`, and names exactly what
-`samba-adws` must expose:
+Proven live against a Samba 4.17 DC, end to end through PowerShell: `New-ADUser`,
+`Set-ADObject`, `Set-ADAccountPassword`, `Rename-ADObject` and `Remove-ADObject`
+each succeeded, with a `Get-ADUser` in between confirming the change and
+`samba-tool` confirming the final delete.
+
+A write still refuses cleanly with `SambaAD.WriteNotAvailable` when an **older,
+read-only** `samba-adws` (one without `ADWSWriteClient`) is installed:
+`write_ops.writable_client` feature-detects the method and refuses by name rather
+than mutating nothing and reporting success.
+
+The client contract this module targets, unchanged, is in
+`src/samba_powershell/write_protocol.py`:
 
 - `create(dn, attributes)`, `modify(dn, changes)`, `delete(dn)`,
   `set_password(dn, secret)` and `rename(dn, new_dn)` on the client, mapping onto
-  the server handlers `samba-adws` already has (`create`, `modify`, `delete`,
+  the server handlers `samba-adws` carries (`create`, `modify`, `delete`,
   `set_password`).
-
-`src/samba_powershell/write_protocol.py` is the exact contract.
 
 ## Where `-WhatIf` stops: in PowerShell
 
@@ -116,7 +120,7 @@ expects from the `AD*` verbs.
   — is proved offline in `tests/test_write.py` against a fake write client.
 - The PowerShell `-WhatIf`/`-Confirm` behaviour is proved by
   `tests/test_write_powershell.ps1` against a backend that refuses to be reached.
-- **Not proven, because `samba-adws` cannot carry a write:** an actual create,
-  modify, delete or password change against a live directory. That lights up when
-  `samba-adws` exposes the client operations `write_protocol.py` names and
-  samba-adws#8 is resolved.
+- **The live path is proven.** Against a Samba 4.17 DC running `samba-adws` with
+  samba-adws#8 and #16, `New-ADUser`, `Set-ADObject`, `Set-ADAccountPassword`,
+  `Rename-ADObject` and `Remove-ADObject` each changed the directory as the
+  authenticated caller, confirmed by a `Get-ADUser` read-back and by `samba-tool`.
