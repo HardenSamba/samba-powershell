@@ -28,7 +28,7 @@ What is actually in this repository today:
 | Identity by distinguished name, GUID, SID or account name | A built or published package |
 | Offline Python and PowerShell tests, and a live acceptance harness | An `install.sh`, and any contract or coding standard check in CI |
 | A Debian packaging skeleton under `debian/` | A configuration file, or code that reads one |
-| A CI workflow on plain Debian, running `mypy --strict` and pytest | |
+| A CI workflow on plain Debian: `mypy --strict`, pytest and the PowerShell tests | |
 | `MODULE.yaml`, declaring the intended surface | |
 
 The module is split between a PowerShell cmdlet surface and a Python backend,
@@ -142,7 +142,7 @@ Until then, that command fails with `Unable to locate package`.
 
 ### From source
 
-This works today and runs the architecture-proof backend from a checkout.
+This works today and runs the backend of the four read cmdlets from a checkout.
 
 ```bash
 git clone https://github.com/HardenSamba/samba-powershell.git
@@ -345,17 +345,22 @@ If `modulekit` is not installed, run it from a checkout:
 ```bash
 git clone https://github.com/HardenSamba/hardensamba-modulekit /tmp/mk
 PYTHONPATH=/tmp/mk/src python3 -m modulekit.cli validate .
-PYTHONPATH=/tmp/mk/src python3 -m modulekit.cli lint src tests
+PYTHONPATH=/tmp/mk/src python3 -m modulekit.cli lint src benchmarks
+PYTHONPATH=/tmp/mk/src python3 -m modulekit.norms tests --require-headers \
+  --max-functions 50 --max-classes 5
 ```
 
 CI runs on `debian:stable`, never on a HardenSamba image. A test that only
 passes with extra software installed is a defect in the test.
 
-`.github/workflows/ci.yml` holds one job, `test`. It installs `python3`,
-`python3-pytest` and `mypy` on `debian:stable`, then runs `mypy --strict src`
-and `PYTHONPATH=src python3 -m pytest tests -q`. Both steps fail the job when
-they fail, so a red run means a real failure. What the job does not do is check
-the contract:
+`.github/workflows/ci.yml` holds two jobs on `debian:stable`. `test` installs
+`python3`, `python3-pytest` and `mypy`, then runs `mypy --strict src`,
+`PYTHONPATH=src python3 -m pytest tests -q` and `benchmarks/transport.py`.
+`powershell` installs PowerShell from Microsoft's repository, validates the
+module manifest, and runs `tests/test_powershell.ps1`,
+`tests/test_composition.ps1` and `benchmarks/transport.ps1`. Every step fails
+its job when it fails, so a red run means a real failure. What neither job does
+is check the contract:
 
 - `modulekit validate .` and `modulekit lint` are not run in CI. The contract
   job that ran the validator has been removed rather than repaired: it cloned
@@ -372,7 +377,8 @@ the contract:
 No check gates a merge in any case. The organisation is on a free plan, where
 private repositories cannot have branch protection or required status checks at
 all, so a green tick has never been a condition of merging here. It means the
-type checker and the three smoke tests passed, and nothing else.
+type checker, the Python tests and the two PowerShell test scripts passed, and
+nothing else.
 
 ### Layout
 
@@ -386,7 +392,7 @@ type checker and the three smoke tests passed, and nothing else.
 | `benchmarks/` | Required process and Unix-socket transport prototypes |
 | `docs/` | English architecture and behaviour documentation |
 | `debian/` | Packaging. The reference installation method |
-| `.github/workflows/` | CI on plain Debian: `mypy --strict` and pytest |
+| `.github/workflows/` | CI on plain Debian: `mypy --strict`, pytest and the PowerShell tests |
 | `.claude/` | Agents and a skill for assisted development |
 
 ### Claude agents
@@ -462,14 +468,12 @@ breaks it. `CLAUDE.md` carries the same marker for the same reason.
 
 ## Licence
 
-**Not settled.** This repository carries no `LICENSE` file, and inventing one
-here would be worse than saying so.
+Proprietary. The terms are the HardenSamba Proprietary Software License,
+version 1.0, in [`LICENSE`](LICENSE). The Debian packaging's `debian/copyright`
+still names no licence; aligning it belongs to the packaging work of ticket #5.
 
 This is a greenfield module, not a fork. There is no upstream project, no
 inherited licence and no divergence to describe. The closest reference points
 are the published cmdlet surface of the Windows `ActiveDirectory` module and the
 wire behaviour implemented in `samba-adws`, and neither is a code ancestor of
 anything here.
-
-A licence will be chosen and committed before the first release. Until a
-`LICENSE` file exists, treat the terms as undetermined.

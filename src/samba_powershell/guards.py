@@ -9,11 +9,9 @@ from samba_powershell.errors import BackendError
 from samba_powershell.object_classes import ClassSpec
 
 
-# Refuses an object of another class the way Windows reports it: the cmdlet
-# does not find it, rather than finding it and complaining about its type. A
-# class derived from the one accepted can still be refused by name, which is
-# how Get-ADUser leaves computers to Get-ADComputer although computer inherits
-# from user.
+# Refuses an object of another class the way Windows does, by not finding it,
+# including a derived class the spec excludes: computer inherits from user, yet
+# Get-ADUser leaves computers to Get-ADComputer.
 def class_guard(spec: ClassSpec, attributes: Mapping[str, object], identity: str) -> None:
     if not spec.object_class:
         return
@@ -21,10 +19,11 @@ def class_guard(spec: ClassSpec, attributes: Mapping[str, object], identity: str
             if isinstance(item, str)}
     if spec.object_class in held and not held.intersection(spec.excluded):
         return
-    raise BackendError(
-        f"Cannot find an object of class '{spec.object_class}' with identity "
-        f"'{identity}'.",
-        "SambaAD.ObjectNotFound",
-        "ObjectNotFound",
-        identity,
-    )
+    raise not_found(identity)
+
+
+# The one not-found every path reports, in the wording Windows uses, whether
+# nothing matched or something of another class did.
+def not_found(identity: str) -> BackendError:
+    return BackendError(f"Cannot find an object with identity '{identity}'.",
+                        "SambaAD.ObjectNotFound", "ObjectNotFound", identity)

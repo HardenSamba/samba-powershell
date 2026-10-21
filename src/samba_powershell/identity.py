@@ -14,11 +14,14 @@ ATTRIBUTE_TYPE = r"(?:[A-Za-z][A-Za-z0-9-]*|[0-9]+(?:\.[0-9]+)*)"
 DISTINGUISHED_NAME = re.compile(rf"{ATTRIBUTE_TYPE}\s*=")
 EXTENDED_REFERENCE = re.compile(r"<(?:GUID|SID)=[^<>]+>(?:;.*)?", re.IGNORECASE)
 
-# RFC 4514 section 3: attribute=value pairs joined by ',' or '+', where a value
-# is never empty, may not start with a space, and escapes any character with a
-# backslash. A trailing lone backslash or an empty component is malformed.
-RDN = rf"\s*{ATTRIBUTE_TYPE}\s*=\s*(?:[^,+\\\s]|\\.)(?:[^,+\\]|\\.)*"
+# A lenient shape check, not the RFC 4514 grammar: attribute=value pairs joined
+# by ',' or '+', each value quoted or backslash-escaped as ldb accepts it, and
+# never empty, since Active Directory refuses an empty RDN value.
+QUOTED_VALUE = r'"(?:[^"\\]|\\.)+"\s*'
+PLAIN_VALUE = r'(?:[^,+\\\s"]|\\.)(?:[^,+\\]|\\.)*'
+RDN = rf"\s*{ATTRIBUTE_TYPE}\s*=\s*(?:{QUOTED_VALUE}|{PLAIN_VALUE})"
 VALID_DN = re.compile(rf"{RDN}(?:[,+]{RDN})*")
+CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 
 
 # Names the attribute an -Identity value should be matched against. The

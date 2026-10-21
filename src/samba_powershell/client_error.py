@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from samba_powershell.errors import BackendError
+from samba_powershell.guards import not_found
 
 CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
 
@@ -17,14 +18,16 @@ HINTS = (
      "DNS host name: Kerberos authenticates host/<name>, so an IP address or an alias has "
      "no principal to authenticate."),
     ("name or service not known", " The name does not resolve; check -Server."),
-    ("connection refused", " Nothing listens on that port; is samba-adws running?"),
+    ("no address associated with hostname", " The name does not resolve; check -Server."),
+    ("failure in name resolution", " The name does not resolve; check -Server."),
+    ("connection refused", " Nothing listens on that port; check the port in -Server, "
+     "or whether samba-adws runs."),
 )
 
 
-# Preserves the client's typed fields. A transport failure is reported against
-# the server, categorised by what failed, with the usual cause named; anything
-# else is reported against the identity the caller gave, not the reference the
-# backend sent on its behalf.
+# Preserves the client's typed fields: a transport failure is reported against
+# the server with its cause named, anything else against the identity the caller
+# gave rather than the reference the backend sent for it.
 def translate_client_error(error: Exception, server: str, identity: str) -> BackendError:
     message = CONTROL.sub(" ", text_field(error, "message", str(error))).strip()
     code = text_field(error, "code", "ClientFailure")
@@ -34,7 +37,7 @@ def translate_client_error(error: Exception, server: str, identity: str) -> Back
                             transport_category(message), server)
     category = text_field(error, "category", "NotSpecified")
     if category == "ObjectNotFound":
-        message = f"Cannot find an object with identity '{identity}'."
+        return not_found(identity)
     return BackendError(message, error_id, category, identity)
 
 

@@ -82,7 +82,8 @@ Protocol version 1 accepts one request:
 }
 ```
 
-A successful response separates the PowerShell type name from its properties:
+A successful response separates the PowerShell type name from its properties,
+abridged here, and names the properties whose values are times:
 
 ```json
 {
@@ -91,12 +92,18 @@ A successful response separates the PowerShell type name from its properties:
   "result": {
     "type": "SambaAD.User",
     "properties": {
+      "DistinguishedName": "CN=Alice,DC=example,DC=com",
       "Name": "Alice",
-      "DistinguishedName": "CN=Alice,DC=example,DC=com"
-    }
+      "whenCreated": "2024-02-29T12:00:00+00:00"
+    },
+    "datetimes": ["whenCreated"]
   }
 }
 ```
+
+Times travel as ISO 8601 text because JSON has no time type; `datetimes` is what
+lets PowerShell turn exactly those into `DateTime` and leave any other text as
+text. A reader of version 1 that ignores the field still gets every value.
 
 Failures use a JSON envelope on standard output even when the process exits
 non-zero:
@@ -137,7 +144,12 @@ A backend that cannot be started, or that answers outside the protocol, is
 reported the same way as any other failure: a non-terminating `ErrorRecord`,
 `SambaAD.BackendUnavailable` or `SambaAD.ProtocolError`. The bridge returns that
 record rather than throwing it, because an exception caught on the way would
-still be appended to the caller's `-ErrorVariable` beside the record.
+still be appended to the caller's `-ErrorVariable` beside the record. For the
+same reason it checks what it can before acting — that the backend exists and
+has an execute bit, that the envelope parses, as a hashtable, into every field
+the cmdlets read — instead of catching the failure afterwards. What it cannot
+check beforehand, a script whose interpreter is gone, still leaves PowerShell's
+own record of the failed start.
 
 ## Transport measurements
 

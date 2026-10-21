@@ -36,10 +36,9 @@ class ADWSSearchClient:
         self.port = port
         self.timeout = timeout
 
-    # Returns one object, or raises the typed not-found failure. The answer
-    # carries the shapes a directory answers with: an objectClass hierarchy,
-    # a non-ASCII value to prove the UTF-8 boundary, a single-valued memberOf,
-    # and the server echoed back so composition can see -Server arrive.
+    # Returns one object, or raises the typed not-found failure, in the shapes a
+    # directory answers with: an objectClass hierarchy, a non-ASCII value, one
+    # memberOf, and the server echoed back so composition can see -Server arrive.
     def get_by_dn(self, identity: str,
                   properties: Sequence[str] = ()) -> Mapping[str, object]:
         if "missing" in identity.lower():

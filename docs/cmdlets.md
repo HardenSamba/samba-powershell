@@ -78,7 +78,12 @@ The extended forms are LDAP's own: the directory resolves `<SID=...>` and
 distinguished name that does not parse — an empty component, an empty value, a
 trailing lone backslash — is refused with `SambaAD.InvalidIdentity` before
 anything travels, rather than answered with a not-found from a server that never
-parsed it.
+parsed it. The check is a lenient shape check, not the RFC 4514 grammar: it
+accepts what ldb accepts, escaped characters, hex pairs, quoted values such as
+`CN="Doe, Jane"`, multi-valued RDNs and spaces around `=`. An identity holding a
+control character is refused the same way: the directory compares a value only
+up to a NUL, so `Administrator` followed by a NUL and anything would otherwise
+resolve to `Administrator`.
 
 An account name is resolved the way Windows resolves it: a subtree search of
 the domain's default naming context for that `sAMAccountName`, scoped to the
@@ -88,13 +93,14 @@ Windows lets the caller leave out. `Get-ADObject` takes no account name, as on
 Windows; it refuses one with `SambaAD.IdentityNotResolvable`, pointing at the
 cmdlet that does.
 
-When an identity matches nothing, the cmdlet writes a non-terminating
-`ErrorRecord` whose `FullyQualifiedErrorId` is `SambaAD.ObjectNotFound`, whose
-`TargetObject` is the identity as the caller gave it, and whose message is
-`Cannot find an object with identity '<identity>'.`. When an account name
-matches more than one object, the cmdlet fails with `SambaAD.IdentityNotUnique`
-rather than choosing one, because silently picking a match would make the result
-depend on directory ordering.
+When an identity matches nothing, or matches an object of another class, the
+cmdlet writes a non-terminating `ErrorRecord` whose `FullyQualifiedErrorId` is
+`SambaAD.ObjectNotFound`, whose `TargetObject` is the identity as the caller
+gave it, less surrounding whitespace, and whose message is
+`Cannot find an object with identity '<identity>'.`, whatever form the identity
+took. When an account name matches more than one object, the cmdlet fails with
+`SambaAD.IdentityNotUnique` rather than choosing one, because silently picking a
+match would make the result depend on directory ordering.
 
 For filters, the same classification also yields the LDAP assertion each form
 implies; a GUID there travels as escaped little-endian bytes, because the
@@ -161,6 +167,13 @@ either end of the range, and decode to nothing rather than to a year 1601 or
 30828 timestamp. A time-syntax value in the two-digit-year UTC-time form is left
 as the server sent it rather than guessed at.
 
+Times cross the JSON boundary as ISO 8601 text, and the response names the
+properties that hold them; the module turns exactly those into local `DateTime`
+values, as Windows shows them. Text that merely looks like a date — an `info` or
+`extensionAttribute1` holding `2026-01-01T10:00:00Z` — stays text. That needs
+`ConvertFrom-Json -DateKind`, which PowerShell 7.5 introduced; under 7.4,
+`ConvertFrom-Json` itself turns any such text into a `DateTime`.
+
 `Enabled` is not a directory attribute. It is the `ACCOUNTDISABLE` bit `0x2` of
 `userAccountControl`, read the other way round. Contract 6.1 forbids inventing
 an attribute for it, and a divergent schema stops a Windows controller
@@ -169,9 +182,16 @@ replicating.
 An attribute the schema declares multi-valued is a list, even when it holds a
 single value, and an empty list when it was asked for by name and holds none:
 its shape never depends on how many values it has. `description` is the one
-exception on users, computers and groups: the schema declares it multi-valued,
-but the directory keeps one value on the security principals it manages, and
-Windows shows it as text there.
+exception, in `Get-ADUser`, `Get-ADComputer` and `Get-ADGroup`: the schema
+declares it multi-valued, but the directory keeps one value on the security
+principals it manages, and those cmdlets on Windows show it as text.
+`Get-ADObject` follows the schema for every object, users included, and returns
+it as a list.
+
+samba-adws 1.0.1 sends `objectClassCategory` of a `classSchema` object as a
+boolean, which loses its value: the schema says Integer, the answer is `true` or
+`false`, and the cmdlets pass that text through rather than invent a number. The
+defect is the server's, and belongs to samba-adws to fix.
 
 ## Default property sets
 
@@ -196,8 +216,9 @@ How the answer is rendered, in Python, before it crosses the JSON boundary:
 
 - The default set's attributes appear under their PowerShell names —
   `sn` as `Surname`, `objectSid` as `SID`, `dNSHostName` as `DNSHostName`.
-  Asked for by name as well, such an attribute also keeps its LDAP name when
-  the two differ by more than case, as Windows shows `sn` beside `Surname`.
+  Asked for by name as well, or under `-Properties *`, such an attribute also
+  keeps its LDAP name when the two differ by more than case, as Windows shows
+  `sn` beside `Surname`.
 - An attribute outside the cmdlet's default set keeps its LDAP display name,
   as the schema spells it, which is what Windows does with `-Properties mail`.
   `Get-ADObject -Properties objectSid` therefore shows `objectSid`, not `SID`.
@@ -212,24 +233,33 @@ How the answer is rendered, in Python, before it crosses the JSON boundary:
 
 ## -Properties
 
-Each entry is one LDAP display name. A name the schema does not define is
-refused with `SambaAD.InvalidProperty`, naming it, the way Windows refuses it,
-rather than returning an object that silently lacks it. A name that cannot be an
-attribute at all is refused before anything travels: several names in one string
-(`'mail,memberOf'` rather than `mail,memberOf`), or an attribute option such as
-`member;range=0-99`, which the endpoint does not carry. Windows extended
-property names that are not attributes, such as `EmailAddress` or
-`LastLogonDate`, are refused the same way; ask for the attribute behind them.
+Each entry is one LDAP display name; `-Property` is an alias, as on Windows. A
+name the schema does not define is refused with `SambaAD.InvalidProperty`, naming
+every such name, the way Windows refuses it, rather than returning an object that
+silently lacks it. A name that cannot be an attribute at all is refused before
+anything travels: several names in one string (`'mail,memberOf'` rather than
+`mail,memberOf`), or an attribute option such as `member;range=0-99`, which the
+endpoint does not carry. Windows extended property names that are not
+attributes, such as `EmailAddress` or `LastLogonDate`, are refused the same way;
+ask for the attribute behind them. The cmdlet's own property names that are not
+attributes — `SID`, `Surname`, `Enabled`, `GroupCategory`, `GroupScope` — are
+accepted and ask for nothing more, since they are already shown. `-Properties`
+given `$null` or an empty list is refused when PowerShell binds it, as on
+Windows; leave the parameter out instead.
 
 `-Properties *` reads the whole object and shows every attribute it stores,
 the derivation sources included. Constructed attributes such as `tokenGroups`
 and `canonicalName`, which the server computes on read, and the reference
 attributes the endpoint adds of its own, do not appear under `-Properties *`;
-name one beside the wildcard — `-Properties *,canonicalName` — to have it.
+name one beside the wildcard — `-Properties *,canonicalName` — to have it. A
+named attribute the whole-object read did not return, such as
+`msDS-KeyVersionNumber`, which the server computes only when named, is read
+again in a second, projected exchange.
 
-The schema is consulted only when a property is named, so a read of the default
-set costs one ADWS exchange. Naming properties adds a RootDSE read and a schema
-search; an account-name identity adds a RootDSE read and a search of its own.
+The schema is consulted only when a property is named or under the wildcard, so
+a read of the default set costs one ADWS exchange. Naming properties adds a
+RootDSE read and a schema search; an account-name identity adds a RootDSE read
+and a search of its own.
 
 ## Servers and failures
 
@@ -240,20 +270,28 @@ another port than 9389. A value of only whitespace is no server, and fails like
 an absent one with `SambaAD.ServerRequired`.
 
 A failure to reach or authenticate to the endpoint is reported against the
-server, under the client's code `SambaAD.TransportError`, with a category
-saying what failed and the usual cause named:
+server as the caller gave it, port included, under the client's code
+`SambaAD.TransportError`, with a category saying what failed and the usual cause
+named:
 
 | Category | When | The message adds |
 |---|---|---|
 | `AuthenticationError` | no Kerberos ticket | run `kinit`, or set `KRB5CCNAME` |
 | `AuthenticationError` | no principal for the server name | use the DNS host name, not an IP or alias |
-| `ConnectionError` | the name does not resolve, or nothing listens | check `-Server`, or whether samba-adws runs |
+| `ConnectionError` | the name does not resolve | check `-Server` |
+| `ConnectionError` | nothing listens on the port | check the port, or whether samba-adws runs |
 | `OperationTimeout` | no answer within 30 seconds | |
 
-A backend that cannot be started reports `SambaAD.BackendUnavailable`, and one
-that answers outside the protocol reports `SambaAD.ProtocolError`; both are
-non-terminating like every other failure, and the backend's standard error is
-written to the debug stream, shown with `-Debug`, rather than into the message.
+A backend that is missing or has no execute bit reports
+`SambaAD.BackendUnavailable`, and one that answers outside the protocol — no
+JSON, another version, an exit code that disagrees with the answer, a result or
+error missing a field the cmdlets read, property names that differ only in case
+— reports `SambaAD.ProtocolError`. Both are non-terminating like every other
+failure, each the one record in `-ErrorVariable`, and the backend's standard
+error is written to the debug stream, shown with `-Debug`, rather than into the
+message. A backend the system finds executable yet cannot start, such as a
+script whose interpreter is gone, also reports `SambaAD.BackendUnavailable`, but
+PowerShell leaves its own record of the failed start beside it.
 
 ## Not supported yet
 

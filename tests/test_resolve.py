@@ -65,11 +65,28 @@ def test_an_ambiguous_account_name_is_refused() -> None:
     assert error.target == "twin"
 
 
-# An account name nothing holds is not found, against the name the caller gave.
+# An account name nothing holds is not found, against the name the caller gave,
+# in the one wording every not-found uses.
 def test_an_unknown_account_name_is_not_found() -> None:
     error = refused(request_for("get_ad_group", "nobody"))
     assert (error.error_id, error.category, error.target) == (
         "SambaAD.ObjectNotFound", "ObjectNotFound", "nobody")
+    assert error.message == "Cannot find an object with identity 'nobody'."
+
+
+# An object of the wrong class reads exactly like one that does not exist.
+def test_the_wrong_class_reads_like_a_missing_object() -> None:
+    error = refused(request_for("get_ad_user", PC01_DN))
+    assert error.message == f"Cannot find an object with identity '{PC01_DN}'."
+
+
+# A control character is refused: the directory would compare only up to a NUL
+# and silently resolve the prefix.
+@pytest.mark.parametrize("identity", ["alice\x00xyz", "CN=Alice\x01,DC=example,DC=com",
+                                      "S-1-5-21-1-2-3-1105\x00"])
+def test_a_control_character_is_refused(identity: str) -> None:
+    error = refused(request_for("get_ad_user", identity))
+    assert (error.error_id, error.category) == ("SambaAD.InvalidIdentity", "InvalidArgument")
 
 
 # A missing distinguished name is reported against the caller's identity, with

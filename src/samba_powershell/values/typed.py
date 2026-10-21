@@ -26,10 +26,9 @@ INTERVAL_TIMES = {"pwdlastset", "accountexpires", "lastlogontimestamp", "lastlog
 TRUTH = {"true": True, "false": False}
 
 
-# One value as JSON can carry it: interval times as ISO text or nothing,
-# directory times as ISO text, flags as booleans, counts as integers, binary
-# decoded where its meaning is known. An empty syntax means the schema was not
-# consulted, and only the attributes known by name are converted.
+# One value as JSON can carry it: times as ISO text or nothing, flags as
+# booleans, counts as integers, binary decoded where its meaning is known. With
+# no syntax, the schema was not consulted and only known names are converted.
 def converted(key: str, value: object, syntax: str) -> object:
     if isinstance(value, bytes):
         return binary(key, value, syntax)
@@ -63,6 +62,12 @@ def time_text(value: str) -> str:
     if GENERALIZED_TIME.fullmatch(value) is None:
         return value
     return decode_generalized_time(value).isoformat()
+
+
+# Whether an attribute's values render as times, the ones PowerShell is told to
+# read back as DateTime.
+def is_time(key: str, syntax: str) -> bool:
+    return key in INTERVAL_TIMES or key in GENERALIZED_TIMES or syntax == TIME
 
 
 # One attribute as rendered: objectClass reduces to the class the object is,

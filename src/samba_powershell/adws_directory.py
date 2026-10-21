@@ -11,9 +11,9 @@ from samba_powershell.adws_protocol import AdwsSearchClient, QueryFactory
 MAX_PAGE_SIZE = 1000
 
 
-# Adapts one samba-adws search client to DirectoryClient. A naming context is
-# asked for once per call: an account-name lookup and a schema lookup in the
-# same read both need one, and the RootDSE does not change between them.
+# Adapts one samba-adws search client to DirectoryClient. Each naming context
+# costs one RootDSE read the first time a session asks for that kind, and none
+# after: the RootDSE does not change while one cmdlet call runs.
 class AdwsDirectory:
     # Holds the client and the query builder that validates its searches.
     def __init__(self, client: AdwsSearchClient, query: QueryFactory) -> None:

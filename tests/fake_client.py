@@ -42,7 +42,13 @@ ALICE = {
     "description": "Reads the ledgers",
     "isCriticalSystemObject": "false",
     "tokenGroups": (sid_bytes(513), sid_bytes(1301)),
+    "msDS-KeyVersionNumber": "2",
+    "info": "2026-01-01T10:00:00+00:00",
 }
+
+# Computed by the server only when named, as Samba computes msDS-KeyVersionNumber:
+# a whole-object read leaves it out.
+ON_REQUEST = frozenset({"msds-keyversionnumber"})
 
 # A disabled account holding the bare minimum: no given name, no surname, no
 # UPN, and a multi-valued attribute with a single value.
@@ -108,6 +114,7 @@ SCHEMA = {
     "distinguishedName": ("2.5.5.1", True, "18"), "objectClass": ("2.5.5.2", False, "18"),
     "objectGUID": ("2.5.5.10", True, "18"), "sAMAccountName": ("2.5.5.12", True, "18"),
     "userPrincipalName": ("2.5.5.12", True, "16"),
+    "msDS-KeyVersionNumber": ("2.5.5.9", True, "20"), "info": ("2.5.5.12", True, "16"),
 }
 
 
@@ -195,7 +202,7 @@ class FakeClient:
             raise FakeNotFound(identity)
         wanted = {name.lower() for name in properties}
         found = {name: value for name, value in record.items()
-                 if not wanted or name.lower() in wanted}
+                 if name.lower() in wanted or not (wanted or name.lower() in ON_REQUEST)}
         found["distinguishedName"] = record["distinguishedName"]
         return found
 

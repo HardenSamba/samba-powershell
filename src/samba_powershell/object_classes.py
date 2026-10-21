@@ -5,11 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-# One cmdlet's shape: its PowerShell type, the objectClass it accepts and the
-# classes derived from it that it still refuses, the attribute fetch behind the
-# default property set docs/cmdlets.md decides, and the properties derived
-# rather than stored. Enabled, GroupCategory and GroupScope are not attributes,
-# so the fetch carries userAccountControl and groupType in their place.
+# One cmdlet's shape, as docs/cmdlets.md decides it: the class it reads, the
+# fetch behind its default property set, and the properties derived in place of
+# attributes, so userAccountControl and groupType stand in for Enabled and scope.
 @dataclass(frozen=True)
 class ClassSpec:
     type_name: str

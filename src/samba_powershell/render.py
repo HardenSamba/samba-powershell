@@ -8,7 +8,7 @@ from samba_powershell.object_classes import ClassSpec
 from samba_powershell.properties import WILDCARD
 from samba_powershell.schema import AttributeInfo, is_multi
 from samba_powershell.values.derive import derived_properties
-from samba_powershell.values.typed import rendered_value
+from samba_powershell.values.typed import is_time, rendered_value
 
 # The default-set attributes whose PowerShell property carries another name.
 # An attribute outside the cmdlet's default set keeps its LDAP display name,
@@ -24,10 +24,9 @@ RENAMED = {
 DERIVATION_SOURCES = {"useraccountcontrol", "grouptype"}
 
 
-# The names one attribute shows under for this cmdlet. A default-set attribute
-# takes its PowerShell name; asked for by name too, it keeps its LDAP name
-# beside it when the two differ by more than case, as Windows shows sn and
-# Surname together.
+# The names one attribute shows under: a default-set attribute takes its
+# PowerShell name, and asked for by name it keeps its LDAP name beside it when
+# the two differ by more than case, as Windows shows sn beside Surname.
 def shown_names(key: str, label: str, defaults: set[str], asked: set[str]) -> list[str]:
     if key not in defaults:
         return [label]
@@ -35,6 +34,15 @@ def shown_names(key: str, label: str, defaults: set[str], asked: set[str]) -> li
     if key in asked and renamed.lower() != key:
         return [renamed, label]
     return [renamed]
+
+
+# The cmdlet's own property names that are not attribute names, such as SID,
+# Surname or GroupScope: already shown, so -Properties takes them as asking for
+# nothing more, as Windows does.
+def own_names(spec: ClassSpec) -> set[str]:
+    renamed = {RENAMED.get(name.lower(), name).lower() for name in spec.fetch}
+    return (renamed - {name.lower() for name in spec.fetch}) | {
+        name.lower() for name in spec.derived}
 
 
 # Every property the object promises, present even when the directory holds no
@@ -69,22 +77,28 @@ def visible(key: str, defaults: set[str], asked: set[str], everything: bool,
     return everything and info is not None and not info.constructed
 
 
-# Everything one object shows, ordered by name without regard to case the way
-# Windows lists properties: the seeded set, overlaid with what came back.
+# Everything one object shows, ordered by name without regard to case, and the
+# names holding times, which PowerShell reads back as DateTime. The wildcard asks
+# for every attribute by name, so sn shows beside Surname as on Windows.
 def render(attributes: Mapping[str, object], spec: ClassSpec, extras: list[str],
-           schema: Mapping[str, AttributeInfo]) -> dict[str, object]:
+           schema: Mapping[str, AttributeInfo]) -> tuple[dict[str, object], list[str]]:
     named = [name for name in extras if name != WILDCARD]
     everything = WILDCARD in extras
     defaults = {name.lower() for name in spec.fetch}
     asked = {name.lower() for name in named}
+    labelled = asked | defaults if everything else asked
     out = seeded(spec, named, schema)
+    times: list[str] = []
     for name, value in attributes.items():
         key = name.lower()
         info = schema.get(key)
         if not visible(key, defaults, asked, everything, info):
             continue
+        syntax = info.syntax if info else ""
         multi = is_multi(key, info, spec.single_valued)
-        for shown in shown_names(key, info.name if info else name, defaults, asked):
-            out[shown] = rendered_value(key, value, info.syntax if info else "", multi)
+        names = shown_names(key, info.name if info else name, defaults, labelled)
+        out.update({shown: rendered_value(key, value, syntax, multi) for shown in names})
+        if is_time(key, syntax):
+            times.extend(names)
     out.update(derived_properties(attributes, spec))
-    return dict(sorted(out.items(), key=lambda item: item[0].casefold()))
+    return dict(sorted(out.items(), key=lambda item: item[0].casefold())), sorted(times)

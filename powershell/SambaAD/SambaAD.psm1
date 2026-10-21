@@ -6,6 +6,17 @@ $script:BackendCommand = if ($env:SAMBA_POWERSHELL_BACKEND) {
     'samba-ad-backend'
 }
 
+# ConvertFrom-Json turns any text shaped like a date into a DateTime. Where it
+# can be told not to, PowerShell 7.5 onwards, only the properties the backend
+# lists as times are converted, so a text attribute stays text.
+$script:JsonDateOptions = if (
+    (Get-Command -Name ConvertFrom-Json).Parameters.ContainsKey('DateKind')
+) {
+    @{ DateKind = 'String' }
+} else {
+    @{}
+}
+
 # Builds the ErrorRecord for a failure the backend could not describe itself,
 # under a stable SambaAD identifier so a script can still tell failures apart.
 function New-SambaADFailure {
@@ -30,11 +41,30 @@ function New-SambaADFailure {
     )
 }
 
+# Whether the system can execute a file: on Linux at least one execute bit, so
+# a backend missing it is refused before Start() throws, which would leave an
+# exception in the caller's -ErrorVariable beside the record.
+function Test-SambaADExecutable {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    if ($IsWindows) {
+        return $true
+    }
+    $execute = [System.IO.UnixFileMode]'UserExecute, GroupExecute, OtherExecute'
+    return ([System.IO.File]::GetUnixFileMode($Path) -band $execute) -ne 0
+}
+
 # Runs one isolated backend request and returns its JSON response envelope,
 # or, for a backend that cannot start or answers outside the protocol, the
-# typed ErrorRecord to report. Nothing here throws on those paths: a caught
-# exception would still land in the caller's -ErrorVariable beside the record.
-# The backend's standard error goes to the debug stream, not the message.
+# typed ErrorRecord to report. Those paths return the record rather than throw
+# it, because a caught exception would still land in the caller's
+# -ErrorVariable; only a backend the system finds executable yet cannot start,
+# such as a script whose interpreter is missing, leaves the runtime's own record
+# there too. The backend's standard error goes to the debug stream.
 function Invoke-SambaADBackend {
     [CmdletBinding()]
     param(
@@ -42,14 +72,15 @@ function Invoke-SambaADBackend {
         [hashtable]$Request
     )
 
-    if (-not (Get-Command -Name $script:BackendCommand -CommandType Application `
-            -ErrorAction Ignore)) {
+    $command = Get-Command -Name $script:BackendCommand -CommandType Application `
+        -ErrorAction Ignore | Select-Object -First 1
+    if (-not $command -or -not (Test-SambaADExecutable -Path $command.Source)) {
         return New-SambaADFailure -ErrorId 'SambaAD.BackendUnavailable' `
             -Category ResourceUnavailable `
             -Message "The backend '$script:BackendCommand' was not found or is not executable."
     }
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = $script:BackendCommand
+    $startInfo.FileName = $command.Source
     $startInfo.ArgumentList.Add('request')
     $startInfo.UseShellExecute = $false
     $startInfo.RedirectStandardInput = $true
@@ -63,9 +94,7 @@ function Invoke-SambaADBackend {
     $process.StartInfo = $startInfo
 
     try {
-        if (-not $process.Start()) {
-            throw 'The backend process did not start.'
-        }
+        $process.Start() | Out-Null
         $outputTask = $process.StandardOutput.ReadToEndAsync()
         $diagnosticTask = $process.StandardError.ReadToEndAsync()
         $process.StandardInput.WriteLine(($Request | ConvertTo-Json -Compress -Depth 8))
@@ -75,9 +104,13 @@ function Invoke-SambaADBackend {
         $diagnostic = $diagnosticTask.GetAwaiter().GetResult()
         $exitCode = $process.ExitCode
     } catch {
+        $reason = $_.Exception
+        while ($reason.InnerException) {
+            $reason = $reason.InnerException
+        }
         return New-SambaADFailure -ErrorId 'SambaAD.BackendUnavailable' `
             -Category ResourceUnavailable `
-            -Message "Unable to run '$script:BackendCommand': $($_.Exception.Message)"
+            -Message "Unable to run '$script:BackendCommand': $($reason.Message)"
     } finally {
         $process.Dispose()
     }
@@ -91,11 +124,13 @@ function Invoke-SambaADBackend {
             -Message ("The backend answered outside the protocol ($problem); run the " +
                 'cmdlet with -Debug to see its standard error.')
     }
-    return $output | ConvertFrom-Json -Depth 8
+    return $output | ConvertFrom-Json -Depth 8 @script:JsonDateOptions
 }
 
 # Names what is wrong with a backend answer, or returns nothing when it is a
-# version 1 envelope whose ok flag agrees with the exit code.
+# version 1 envelope whose ok flag agrees with the exit code and whose result or
+# error carries every field the cmdlets read. It parses into a hashtable, which,
+# unlike an object, accepts property names that differ only in case.
 function Test-SambaADEnvelope {
     [CmdletBinding()]
     param(
@@ -113,23 +148,56 @@ function Test-SambaADEnvelope {
     if (-not (Test-Json -Json $Output -ErrorAction Ignore)) {
         return 'invalid JSON'
     }
-    $response = $Output | ConvertFrom-Json -Depth 8
+    $response = $Output | ConvertFrom-Json -AsHashtable -Depth 8
     if (
-        $response -isnot [pscustomobject] -or
-        -not $response.PSObject.Properties['version'] -or
-        -not $response.PSObject.Properties['ok'] -or
-        $response.version -ne 1 -or
-        $response.ok -isnot [bool]
+        $response -isnot [System.Collections.IDictionary] -or
+        $response['version'] -ne 1 -or
+        $response['ok'] -isnot [bool]
     ) {
         return 'invalid envelope'
     }
-    $expectedExitCode = if ($response.ok) { 0 } else { 1 }
+    $expectedExitCode = if ($response['ok']) { 0 } else { 1 }
     if ($ExitCode -ne $expectedExitCode) {
         return "exit code $ExitCode"
     }
+    if ($response['ok']) {
+        return Test-SambaADResult -Result $response['result']
+    }
+    $failure = $response['error']
+    if (
+        $failure -isnot [System.Collections.IDictionary] -or
+        $failure['message'] -isnot [string] -or
+        $failure['error_id'] -isnot [string]
+    ) {
+        return 'invalid error'
+    }
 }
 
-# Converts a backend error envelope into a native PowerShell ErrorRecord.
+# Names what is wrong with a success envelope's result, or returns nothing: it
+# needs a type and properties, and property names that differ by more than case.
+function Test-SambaADResult {
+    [CmdletBinding()]
+    param(
+        [Parameter()]
+        [AllowNull()]
+        [object]$Result
+    )
+
+    if (
+        $Result -isnot [System.Collections.IDictionary] -or
+        $Result['type'] -isnot [string] -or
+        $Result['properties'] -isnot [System.Collections.IDictionary]
+    ) {
+        return 'invalid result'
+    }
+    $names = @($Result['properties'].Keys | ForEach-Object { ([string]$_).ToLowerInvariant() })
+    if (@($names | Select-Object -Unique).Count -ne $names.Count) {
+        return 'property names that differ only in case'
+    }
+}
+
+# Converts a backend error envelope into a native PowerShell ErrorRecord. The
+# category and target are optional, and an unknown category is NotSpecified.
 function New-SambaADErrorRecord {
     [CmdletBinding()]
     param(
@@ -137,25 +205,46 @@ function New-SambaADErrorRecord {
         [pscustomobject]$ErrorEnvelope
     )
 
+    $fields = $ErrorEnvelope.PSObject.Properties
     $category = [System.Management.Automation.ErrorCategory]::NotSpecified
-    try {
-        $category = [System.Enum]::Parse(
+    $parsed = $null
+    if ($fields['category'] -and [System.Enum]::TryParse(
             [System.Management.Automation.ErrorCategory],
-            [string]$ErrorEnvelope.category,
-            $true
-        )
-    } catch {
-        $category = [System.Management.Automation.ErrorCategory]::NotSpecified
+            [string]$fields['category'].Value, $true, [ref]$parsed)) {
+        $category = $parsed
     }
-    $exception = [System.InvalidOperationException]::new(
-        [string]$ErrorEnvelope.message
-    )
+    $target = if ($fields['target']) { $fields['target'].Value } else { $null }
+    $exception = [System.InvalidOperationException]::new([string]$ErrorEnvelope.message)
     return [System.Management.Automation.ErrorRecord]::new(
         $exception,
         [string]$ErrorEnvelope.error_id,
         $category,
-        $ErrorEnvelope.target
+        $target
     )
+}
+
+# Turns the ISO 8601 text the backend sends for a time property into the local
+# DateTime Windows shows, value by value; anything else is left as it is.
+function ConvertTo-SambaADDateTime {
+    [CmdletBinding()]
+    param(
+        [Parameter()]
+        [AllowNull()]
+        [object]$Value
+    )
+
+    if ($Value -is [System.Array]) {
+        return , [object[]]@($Value | ForEach-Object { ConvertTo-SambaADDateTime -Value $_ })
+    }
+    $parsed = [System.DateTimeOffset]::MinValue
+    if (
+        $Value -is [string] -and
+        [System.DateTimeOffset]::TryParse($Value, [cultureinfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::None, [ref]$parsed)
+    ) {
+        return $parsed.LocalDateTime
+    }
+    return $Value
 }
 
 # Runs one read operation and emits the typed object, or the backend's error.
@@ -205,6 +294,13 @@ function Invoke-SambaADRead {
         return
     }
     $result = $response.result.properties
+    $times = $response.result.PSObject.Properties['datetimes']
+    foreach ($name in @(if ($times) { $times.Value })) {
+        $property = $result.PSObject.Properties[[string]$name]
+        if ($property) {
+            $property.Value = ConvertTo-SambaADDateTime -Value $property.Value
+        }
+    }
     $result.PSObject.TypeNames.Insert(0, [string]$response.result.type)
     $result | Add-Member -MemberType ScriptMethod -Name ToString -Force -Value {
         [string]$this.DistinguishedName
@@ -226,6 +322,8 @@ function Get-ADUser {
         [string]$Server = $env:SAMBA_AD_SERVER,
 
         [Parameter()]
+        [Alias('Property')]
+        [ValidateNotNullOrEmpty()]
         [string[]]$Properties = @()
     )
 
@@ -249,6 +347,8 @@ function Get-ADComputer {
         [string]$Server = $env:SAMBA_AD_SERVER,
 
         [Parameter()]
+        [Alias('Property')]
+        [ValidateNotNullOrEmpty()]
         [string[]]$Properties = @()
     )
 
@@ -272,6 +372,8 @@ function Get-ADGroup {
         [string]$Server = $env:SAMBA_AD_SERVER,
 
         [Parameter()]
+        [Alias('Property')]
+        [ValidateNotNullOrEmpty()]
         [string[]]$Properties = @()
     )
 
@@ -295,6 +397,8 @@ function Get-ADObject {
         [string]$Server = $env:SAMBA_AD_SERVER,
 
         [Parameter()]
+        [Alias('Property')]
+        [ValidateNotNullOrEmpty()]
         [string[]]$Properties = @()
     )
 

@@ -44,10 +44,9 @@ def checked_name(name: str) -> str:
                        "InvalidArgument", name)
 
 
-# The attribute fetch for one call: the class's default set plus the names
-# asked for, or the whole object when the caller asked for everything.
-# -Properties adds to the defaults rather than replacing them, and a default
-# asked for again in another spelling is not fetched twice.
+# The attribute fetch for one call: the default set plus the names asked for,
+# each once whatever its spelling, or the whole object under the wildcard.
+# -Properties adds to the defaults rather than replacing them.
 def fetch_list(defaults: Sequence[str], extras: Sequence[str]) -> tuple[str, ...]:
     if WILDCARD in extras:
         return ()
@@ -71,9 +70,10 @@ def typed_names(attributes: Mapping[str, object], extras: Sequence[str]) -> set[
 def check_known(extras: Sequence[str], schema: Mapping[str, AttributeInfo]) -> None:
     unknown = [name for name in extras if name != WILDCARD and name.lower() not in schema]
     if unknown:
+        listed = ", ".join(f"'{name}'" for name in unknown)
+        verb = "is not an attribute" if len(unknown) == 1 else "are not attributes"
         raise BackendError(
-            f"One or more properties are invalid: {', '.join(unknown)} is not an attribute "
-            "the schema defines.",
+            f"One or more properties are invalid: {listed} {verb} the schema defines.",
             "SambaAD.InvalidProperty",
             "InvalidArgument",
             unknown[0],

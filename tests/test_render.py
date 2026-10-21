@@ -6,7 +6,9 @@ import json
 
 import pytest
 
+from samba_powershell.dispatcher import dispatch
 from tests.backend_calls import answered, refused, request_for
+from tests.fake_client import FakeClient
 
 ALICE_DN = "CN=Alice,CN=Users,DC=example,DC=com"
 BOB_DN = "CN=Bob,CN=Users,DC=example,DC=com"
@@ -93,12 +95,61 @@ def test_a_named_constructed_attribute_survives_the_wildcard() -> None:
     assert properties["tokenGroups"] == ["S-1-5-21-1-2-3-513", "S-1-5-21-1-2-3-1301"]
 
 
+# An attribute the server computes only when named is read again beside the
+# wildcard, rather than shown as null, and stays out of a plain wildcard read.
+def test_an_on_request_attribute_is_read_beside_the_wildcard() -> None:
+    plain, _ = answered(request_for("get_ad_user", ALICE_DN, ["*"]))
+    assert "msDS-KeyVersionNumber" not in plain
+    named, client = answered(request_for("get_ad_user", ALICE_DN,
+                                         ["*", "msDS-KeyVersionNumber"]))
+    assert named["msDS-KeyVersionNumber"] == 2
+    assert client.requested == ["msDS-KeyVersionNumber"]
+
+
+# Under the wildcard a renamed default shows under both names, as on Windows.
+def test_the_wildcard_keeps_ldap_names_beside_powershell_names() -> None:
+    properties, _ = answered(request_for("get_ad_user", ALICE_DN, ["*"]))
+    assert properties["sn"] == properties["Surname"] == "Liddell"
+    assert properties["objectSid"] == properties["SID"]
+
+
+# The cmdlet's own property names are already shown, so asking for them adds
+# nothing and is not refused, as Windows accepts -Properties SID.
+def test_the_cmdlets_own_names_are_accepted() -> None:
+    user, client = answered(request_for("get_ad_user", ALICE_DN, ["SID", "Surname", "Enabled"]))
+    assert client.searches == []
+    assert user["SID"] == "S-1-5-21-1-2-3-1105" and user["Enabled"] is True
+    group, _ = answered(request_for("get_ad_group", SALES_DN, ["GroupScope"]))
+    assert group["GroupScope"] == "Global"
+
+
+# The backend names the properties holding times, so PowerShell converts those
+# and leaves text that merely looks like a date as text.
+def test_time_properties_are_listed_and_text_is_not() -> None:
+    request = request_for("get_ad_user", ALICE_DN, ["whenCreated", "pwdLastSet", "info"])
+    result = dispatch(request, FakeClient)
+    assert isinstance(result, dict)
+    assert result["datetimes"] == ["pwdLastSet", "whenCreated"]
+    properties = result["properties"]
+    assert isinstance(properties, dict)
+    assert properties["info"] == "2026-01-01T10:00:00+00:00"
+
+
 # A property the schema does not define is refused, the way Windows refuses
 # it, rather than returning an object that silently lacks it.
 def test_an_unknown_property_is_refused() -> None:
     error = refused(request_for("get_ad_user", ALICE_DN, ["mail", "doesNotExist"]))
     assert (error.error_id, error.target) == ("SambaAD.InvalidProperty", "doesNotExist")
-    assert "doesNotExist" in error.message
+    assert error.message == ("One or more properties are invalid: 'doesNotExist' is not an "
+                             "attribute the schema defines.")
+
+
+# Several unknown properties are all named, in a sentence that reads right.
+def test_several_unknown_properties_are_all_named() -> None:
+    error = refused(request_for("get_ad_user", ALICE_DN, ["foo", "mail", "bar"]))
+    assert error.message == ("One or more properties are invalid: 'foo', 'bar' are not "
+                             "attributes the schema defines.")
+    assert error.target == "foo"
 
 
 # A name no attribute can have is refused before anything travels, with the

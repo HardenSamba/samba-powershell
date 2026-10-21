@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from samba_powershell.identity import classify_identity, identity_filter
+from samba_powershell.identity import classify_identity, identity_filter, is_valid_dn
 
 FORMS = [
     ("CN=Alice,OU=Staff,DC=example,DC=com", "distinguishedName"),
@@ -51,3 +51,23 @@ def test_guid_filter_is_escaped_binary() -> None:
 # An account name carrying filter metacharacters cannot escape its assertion.
 def test_account_name_metacharacters_are_escaped() -> None:
     assert identity_filter("a)(b*") == "(sAMAccountName=a\\29\\28b\\2a)"
+
+
+# The distinguished names ldb accepts pass the shape check: escapes, hex pairs,
+# quoted values with commas inside, multi-valued RDNs and spaces around '='.
+@pytest.mark.parametrize("identity", [
+    "CN=Doe\\, Jane,CN=Users,DC=example,DC=com",
+    "CN=Doe\\2C Jane,CN=Users,DC=example,DC=com",
+    'CN="Doe, Jane",CN=Users,DC=example,DC=com',
+    "CN=Jane+UID=jdoe,DC=example,DC=com",
+    "CN = Jane , DC = example",
+    "2.5.4.3=Jane,DC=example,DC=com",
+])
+def test_well_formed_dns_are_accepted(identity: str) -> None:
+    assert is_valid_dn(identity)
+
+
+# Empty components, empty values and a dangling escape are refused.
+@pytest.mark.parametrize("identity", ["CN=", "CN=a,,DC=b", "CN=a\\", 'CN="",DC=b', "CN=a,"])
+def test_malformed_dns_are_refused(identity: str) -> None:
+    assert not is_valid_dn(identity)

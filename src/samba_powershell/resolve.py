@@ -5,7 +5,9 @@ from __future__ import annotations
 from samba_powershell.attributes import find
 from samba_powershell.client_protocol import DirectoryClient
 from samba_powershell.errors import BackendError
+from samba_powershell.guards import not_found
 from samba_powershell.identity import (
+    CONTROL_CHARACTER,
     EXTENDED_REFERENCE,
     bare_guid,
     classify_identity,
@@ -15,11 +17,11 @@ from samba_powershell.ldap_escape import escape_value
 from samba_powershell.object_classes import ClassSpec
 
 
-# The reference one identity reaches the wire with. A SID or GUID travels as
-# the extended form <SID=...> or <GUID=...>, which the directory resolves on
-# its own; a distinguished name travels as it is once it is well formed; an
-# account name is looked up, which is the one form that costs a search.
+# The reference one identity reaches the wire with: a SID or GUID as the <SID=>
+# or <GUID=> form the directory resolves itself, a distinguished name as it is
+# once well formed, and an account name through a search.
 def wire_reference(identity: str, spec: ClassSpec, directory: DirectoryClient) -> str:
+    refuse_control(identity)
     if EXTENDED_REFERENCE.fullmatch(identity):
         return identity
     kind = classify_identity(identity)
@@ -30,6 +32,16 @@ def wire_reference(identity: str, spec: ClassSpec, directory: DirectoryClient) -
     if kind == "distinguishedName":
         return checked_dn(identity)
     return account_reference(identity, spec, directory)
+
+
+# Refuses an identity holding a control character: none of the forms can, and
+# the directory compares only up to a NUL, so a suffix would be silently dropped.
+def refuse_control(identity: str) -> None:
+    if CONTROL_CHARACTER.search(identity):
+        raise BackendError(
+            f"Identity {identity!r} contains a control character, which no account name, "
+            "GUID, SID or distinguished name holds.",
+            "SambaAD.InvalidIdentity", "InvalidArgument", identity)
 
 
 # Refuses a malformed distinguished name before it travels, naming the value.
@@ -60,13 +72,13 @@ def account_reference(identity: str, spec: ClassSpec, directory: DirectoryClient
     base = directory.naming_context("defaultNamingContext")
     found = directory.search(base, "Subtree", account_filter(identity, spec),
                              ("distinguishedName",), 2)
+    if not found:
+        raise not_found(identity)
     if len(found) == 1 and isinstance(dn := find(found[0], "distinguishedName"), str):
         return dn
-    unique = "more than one object" if found else "no object"
-    error_id = "SambaAD.IdentityNotUnique" if found else "SambaAD.ObjectNotFound"
-    raise BackendError(f"The account name '{identity}' matches {unique} of class "
-                       f"'{spec.object_class}' under '{base}'.", error_id,
-                       "InvalidResult" if found else "ObjectNotFound", identity)
+    raise BackendError(f"The account name '{identity}' matches more than one object of "
+                       f"class '{spec.object_class}' under '{base}'.",
+                       "SambaAD.IdentityNotUnique", "InvalidResult", identity)
 
 
 # The filter an account name implies for this cmdlet's class. A computer's

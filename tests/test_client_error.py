@@ -53,16 +53,20 @@ def test_an_unknown_principal_is_not_a_missing_object() -> None:
     assert SERVER in error.message
 
 
-# Network failures are categorised by what failed, and say which endpoint.
-@pytest.mark.parametrize(("message", "category"), [
-    ("[Errno -2] Name or service not known", "ConnectionError"),
-    ("[Errno 111] Connection refused", "ConnectionError"),
-    ("timed out", "OperationTimeout"),
+# Network failures are categorised by what failed, say which endpoint, and name
+# the usual cause whichever way the resolver words a name that does not resolve.
+@pytest.mark.parametrize(("message", "category", "hint"), [
+    ("[Errno -2] Name or service not known", "ConnectionError", "does not resolve"),
+    ("[Errno -5] No address associated with hostname", "ConnectionError", "does not resolve"),
+    ("[Errno -3] Temporary failure in name resolution", "ConnectionError", "does not resolve"),
+    ("[Errno 111] Connection refused", "ConnectionError", "check the port"),
+    ("timed out", "OperationTimeout", ""),
 ])
-def test_network_failures_are_categorised(message: str, category: str) -> None:
+def test_network_failures_are_categorised(message: str, category: str, hint: str) -> None:
     error = translated(message, "TransportError")
     assert error.category == category
     assert error.message.startswith(f"Cannot reach the ADWS endpoint on '{SERVER}'")
+    assert hint in error.message
 
 
 # A missing object is reported against the identity, in Windows's wording.

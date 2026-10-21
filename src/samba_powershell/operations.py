@@ -28,12 +28,13 @@ def get_object(request: dict[str, object], client_factory: ClientFactory,
     identity = parameters.required_string(request, "identity")
     server, port = parameters.requested_endpoint(request)
     extras = properties.requested_extras(request)
+    endpoint = server if port == parameters.ADWS_PORT else f"{server}:{port}"
     try:
         return read(client_factory(server, port, ADWS_TIMEOUT), identity, spec, extras)
     except BackendError:
         raise
     except Exception as exc:
-        raise translate_client_error(exc, server, identity) from exc
+        raise translate_client_error(exc, endpoint, identity) from exc
 
 
 # Resolves, reads, guards and renders one object on an open directory session.
@@ -41,10 +42,25 @@ def get_object(request: dict[str, object], client_factory: ClientFactory,
 # under -Properties *, so a read of the default set costs one exchange.
 def read(directory: DirectoryClient, identity: str, spec: ClassSpec,
          extras: list[str]) -> dict[str, object]:
+    extras = [name for name in extras if name.lower() not in render.own_names(spec)]
     reference = wire_reference(identity, spec, directory)
     fetch = properties.fetch_list(spec.fetch, extras)
-    attributes = dict(directory.get_by_dn(reference, fetch))
+    attributes = completed(directory, reference, dict(directory.get_by_dn(reference, fetch)),
+                           extras)
     class_guard(spec, attributes, identity)
     schema = describe(directory, properties.typed_names(attributes, extras))
     properties.check_known(extras, schema)
-    return {"type": spec.type_name, "properties": render.render(attributes, spec, extras, schema)}
+    shown, times = render.render(attributes, spec, extras, schema)
+    return {"type": spec.type_name, "properties": shown, "datetimes": times}
+
+
+# Under the wildcard, reads again, projected, the attributes named beside it
+# that the whole-object read left out: the server computes some only when named.
+def completed(directory: DirectoryClient, reference: str, attributes: dict[str, object],
+              extras: list[str]) -> dict[str, object]:
+    held = {key.lower() for key in attributes}
+    missing = [name for name in extras
+               if name != properties.WILDCARD and name.lower() not in held]
+    if properties.WILDCARD not in extras or not missing:
+        return attributes
+    return {**attributes, **directory.get_by_dn(reference, missing)}

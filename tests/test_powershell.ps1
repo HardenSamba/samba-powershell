@@ -92,6 +92,47 @@ try {
         throw 'A backend answering outside the protocol did not give a typed ErrorRecord.'
     }
 
+    foreach ($malformed in 'noresult', 'noerror', 'casedupe') {
+        $shapeless = @()
+        Get-ADUser -Identity $malformed -Server dc1 -ErrorAction SilentlyContinue `
+            -ErrorVariable shapeless
+        if ($shapeless.Count -ne 1 -or $shapeless[0].FullyQualifiedErrorId -notlike 'SambaAD.ProtocolError*') {
+            throw "A version 1 envelope missing its fields ($malformed) did not give one ProtocolError."
+        }
+    }
+
+    if ($user.whenCreated -isnot [datetime]) {
+        throw 'A property the backend lists as a time did not arrive as a DateTime.'
+    }
+    if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind') -and
+            $user.info -isnot [string]) {
+        throw 'Text that only looks like a date did not stay text.'
+    }
+    $bound = $false
+    try {
+        Get-ADUser -Identity 'CN=Alice,DC=example,DC=com' -Server dc1 -Properties $null
+    } catch {
+        $bound = $_.FullyQualifiedErrorId -like 'ParameterArgumentValidationError*'
+    }
+    if (-not $bound) {
+        throw 'A null -Properties was not refused at parameter binding, as on Windows.'
+    }
+
+    if (-not $IsWindows) {
+        $plain = $temporary + '-not-executable'
+        Set-Content -LiteralPath $plain -Value "#!/bin/sh`nexit 0" -Encoding utf8NoBOM
+        & chmod 600 $plain
+        $env:SAMBA_POWERSHELL_BACKEND = $plain
+        Import-Module SambaAD -Force
+        $unrunnable = @()
+        Get-ADUser -Identity 'CN=Alice,DC=example,DC=com' -Server dc1 `
+            -ErrorAction SilentlyContinue -ErrorVariable unrunnable
+        Remove-Item -LiteralPath $plain -Force
+        if ($unrunnable.Count -ne 1 -or $unrunnable[0].FullyQualifiedErrorId -notlike 'SambaAD.BackendUnavailable*') {
+            throw 'A backend without an execute bit did not give exactly one BackendUnavailable.'
+        }
+    }
+
     $env:SAMBA_POWERSHELL_BACKEND = $temporary + '-does-not-exist'
     Import-Module SambaAD -Force
     $absent = @()
