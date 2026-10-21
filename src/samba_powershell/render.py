@@ -2,92 +2,89 @@
 
 from __future__ import annotations
 
-import base64
 from collections.abc import Mapping
 
 from samba_powershell.object_classes import ClassSpec
-from samba_powershell.values.account_control import is_enabled
-from samba_powershell.values.derive import group_category, group_scope, leaf_class, numeric
-from samba_powershell.values.guid import decode_guid
-from samba_powershell.values.sid import decode_sid
-from samba_powershell.values.times import decode_generalized_time, decode_interval_time
+from samba_powershell.properties import WILDCARD
+from samba_powershell.schema import AttributeInfo, is_multi
+from samba_powershell.values.derive import derived_properties
+from samba_powershell.values.typed import rendered_value
 
-# The attributes whose PowerShell property carries another name. Anything not
-# named here keeps its LDAP display name, which is what Windows does with the
-# extra properties an administrator asks for.
+# The default-set attributes whose PowerShell property carries another name.
+# An attribute outside the cmdlet's default set keeps its LDAP display name,
+# which is what Windows does with the extra properties an administrator names.
 RENAMED = {
     "distinguishedname": "DistinguishedName", "name": "Name",
     "objectguid": "ObjectGUID", "objectsid": "SID", "samaccountname": "SamAccountName",
     "sn": "Surname", "givenname": "GivenName", "userprincipalname": "UserPrincipalName",
     "dnshostname": "DNSHostName", "objectclass": "ObjectClass",
 }
-GENERALIZED_TIMES = {"whencreated", "whenchanged"}
-INTERVAL_TIMES = {"pwdlastset", "accountexpires", "lastlogontimestamp", "lastlogon",
-                  "badpasswordtime", "lockouttime"}
-# Fetched so a property can be derived; shown raw only when asked for by name.
+# Fetched so a property can be derived; shown raw only when asked for by name
+# or under -Properties *.
 DERIVATION_SOURCES = {"useraccountcontrol", "grouptype"}
 
 
-# One attribute value as JSON can carry it: binary decoded where its meaning is
-# known, base64 where it is not, and the two time encodings as ISO text.
-def _scalar(key: str, value: object) -> object:
-    if key == "objectguid" and isinstance(value, bytes):
-        return decode_guid(value)
-    if key == "objectsid" and isinstance(value, bytes):
-        return decode_sid(value)
-    if isinstance(value, bytes):
-        return base64.b64encode(value).decode("ascii")
-    if key in GENERALIZED_TIMES and isinstance(value, str):
-        return decode_generalized_time(value).isoformat()
-    if key in INTERVAL_TIMES and isinstance(value, str):
-        decoded = decode_interval_time(numeric(key, value))
-        return decoded.isoformat() if decoded is not None else None
-    return value
+# The names one attribute shows under for this cmdlet. A default-set attribute
+# takes its PowerShell name; asked for by name too, it keeps its LDAP name
+# beside it when the two differ by more than case, as Windows shows sn and
+# Surname together.
+def shown_names(key: str, label: str, defaults: set[str], asked: set[str]) -> list[str]:
+    if key not in defaults:
+        return [label]
+    renamed = RENAMED.get(key, label)
+    if key in asked and renamed.lower() != key:
+        return [renamed, label]
+    return [renamed]
 
 
-# One attribute as rendered: objectClass reduces to the class the object is,
-# a multi-valued attribute becomes a list, a single value stays scalar.
-def rendered_value(key: str, value: object) -> object:
-    if key == "objectclass":
-        return leaf_class(value)
-    if isinstance(value, tuple):
-        return [_scalar(key, item) for item in value]
-    return _scalar(key, value)
-
-
-# The value of one attribute, found without regard to the server's casing.
-def find(attributes: Mapping[str, object], name: str) -> object:
-    for key, value in attributes.items():
-        if key.lower() == name.lower():
-            return value
-    return None
-
-
-# The properties Windows presents that the directory does not store, derived
-# from the attributes fetched in their place.
-def derived(attributes: Mapping[str, object], spec: ClassSpec) -> dict[str, object]:
-    out: dict[str, object] = {}
-    control = find(attributes, "userAccountControl")
-    if control is not None and spec.type_name in ("SambaAD.User", "SambaAD.Computer"):
-        out["Enabled"] = is_enabled(numeric("userAccountControl", control))
-    group_type = find(attributes, "groupType")
-    if group_type is not None and spec.type_name == "SambaAD.Group":
-        out["GroupCategory"] = group_category(numeric("groupType", group_type))
-        out["GroupScope"] = group_scope(numeric("groupType", group_type))
+# Every property the object promises, present even when the directory holds no
+# value for it: null, or an empty list for a multi-valued attribute asked for
+# by name. Windows does the same, so one result set has one shape.
+def seeded(spec: ClassSpec, named: list[str],
+           schema: Mapping[str, AttributeInfo]) -> dict[str, object]:
+    defaults = {name.lower() for name in spec.fetch}
+    asked = {name.lower() for name in named}
+    out: dict[str, object] = {name: None for name in spec.derived}
+    out.update({RENAMED.get(name.lower(), name): None for name in spec.fetch
+                if name.lower() not in DERIVATION_SOURCES})
+    for name in named:
+        info = schema.get(name.lower())
+        empty: object = [] if is_multi(name.lower(), info, spec.single_valued) else None
+        for shown in shown_names(name.lower(), info.name if info else name, defaults, asked):
+            out.setdefault(shown, empty)
     return out
 
 
-# Everything one object shows: renamed defaults, derived properties, and the
-# extra attributes under their own names. A derivation source appears raw only
-# when the caller asked for it by name.
-def render(attributes: Mapping[str, object], spec: ClassSpec,
-           extras: list[str]) -> dict[str, object]:
-    asked = {name.lower() for name in extras}
-    out: dict[str, object] = {}
+# Whether one returned attribute belongs in the answer: anything asked for by
+# name, the default set less its derivation sources, and under -Properties *
+# every stored attribute, but none the server computes or adds of its own.
+def visible(key: str, defaults: set[str], asked: set[str], everything: bool,
+            info: AttributeInfo | None) -> bool:
+    if key in asked:
+        return True
+    if key in DERIVATION_SOURCES:
+        return everything
+    if key in defaults:
+        return True
+    return everything and info is not None and not info.constructed
+
+
+# Everything one object shows, ordered by name without regard to case the way
+# Windows lists properties: the seeded set, overlaid with what came back.
+def render(attributes: Mapping[str, object], spec: ClassSpec, extras: list[str],
+           schema: Mapping[str, AttributeInfo]) -> dict[str, object]:
+    named = [name for name in extras if name != WILDCARD]
+    everything = WILDCARD in extras
+    defaults = {name.lower() for name in spec.fetch}
+    asked = {name.lower() for name in named}
+    out = seeded(spec, named, schema)
     for name, value in attributes.items():
         key = name.lower()
-        if key in DERIVATION_SOURCES and key not in asked:
+        info = schema.get(key)
+        if not visible(key, defaults, asked, everything, info):
             continue
-        out[RENAMED.get(key, name)] = rendered_value(key, value)
-    out.update(derived(attributes, spec))
-    return dict(sorted(out.items()))
+        multi = is_multi(key, info, spec.single_valued)
+        for shown in shown_names(key, info.name if info else name, defaults, asked):
+            out[shown] = rendered_value(key, value, info.syntax if info else "", multi)
+    out.update(derived_properties(attributes, spec))
+    return dict(sorted(out.items(), key=lambda item: item[0].casefold()))

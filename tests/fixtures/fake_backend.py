@@ -10,6 +10,10 @@ from typing import cast
 request = cast(dict[str, object], json.load(sys.stdin))
 parameters = cast(dict[str, object], request["parameters"])
 identity = cast(str, parameters["identity"])
+if identity == "garbage":
+    sys.stdout.write("this is not the protocol\n")
+    sys.stderr.write("Traceback (most recent call last): a fake crash\n")
+    raise SystemExit(1)
 if identity == "missing":
     response: dict[str, object] = {
         "version": 1,
@@ -28,9 +32,10 @@ else:
         "result": {
             "type": "SambaAD.User",
             "properties": {
+                "DistinguishedName": identity,
                 "Name": "Alice",
                 "SamAccountName": "alice",
-                "DistinguishedName": identity,
+                "Surname": None,
             },
         },
     }

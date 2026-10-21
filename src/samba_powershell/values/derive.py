@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
+from samba_powershell.attributes import find
 from samba_powershell.errors import BackendError
+from samba_powershell.object_classes import ClassSpec
+from samba_powershell.values.account_control import is_enabled
 
 # groupType is a bit field, [MS-ADTS] 2.2.12: one scope bit, and a sign bit
 # that makes the group a security group rather than a distribution list.
@@ -53,3 +58,17 @@ def leaf_class(value: object) -> str:
         last = value[-1]
         return last if isinstance(last, str) else ""
     return value if isinstance(value, str) else ""
+
+
+# The properties Windows presents that the directory does not store, derived
+# from the attributes the cmdlet fetched in their place.
+def derived_properties(attributes: Mapping[str, object], spec: ClassSpec) -> dict[str, object]:
+    out: dict[str, object] = {}
+    control = find(attributes, "userAccountControl")
+    if control is not None and "Enabled" in spec.derived:
+        out["Enabled"] = is_enabled(numeric("userAccountControl", control))
+    group_type = find(attributes, "groupType")
+    if group_type is not None and "GroupScope" in spec.derived:
+        out["GroupCategory"] = group_category(numeric("groupType", group_type))
+        out["GroupScope"] = group_scope(numeric("groupType", group_type))
+    return out

@@ -6,7 +6,35 @@ $script:BackendCommand = if ($env:SAMBA_POWERSHELL_BACKEND) {
     'samba-ad-backend'
 }
 
-# Runs one isolated backend request and returns its JSON response envelope.
+# Builds the ErrorRecord for a failure the backend could not describe itself,
+# under a stable SambaAD identifier so a script can still tell failures apart.
+function New-SambaADFailure {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$ErrorId,
+
+        [Parameter(Mandatory)]
+        [System.Management.Automation.ErrorCategory]$Category,
+
+        [Parameter(Mandatory)]
+        [string]$Message
+    )
+
+    $exception = [System.InvalidOperationException]::new($Message)
+    return [System.Management.Automation.ErrorRecord]::new(
+        $exception,
+        $ErrorId,
+        $Category,
+        $script:BackendCommand
+    )
+}
+
+# Runs one isolated backend request and returns its JSON response envelope,
+# or, for a backend that cannot start or answers outside the protocol, the
+# typed ErrorRecord to report. Nothing here throws on those paths: a caught
+# exception would still land in the caller's -ErrorVariable beside the record.
+# The backend's standard error goes to the debug stream, not the message.
 function Invoke-SambaADBackend {
     [CmdletBinding()]
     param(
@@ -14,6 +42,12 @@ function Invoke-SambaADBackend {
         [hashtable]$Request
     )
 
+    if (-not (Get-Command -Name $script:BackendCommand -CommandType Application `
+            -ErrorAction Ignore)) {
+        return New-SambaADFailure -ErrorId 'SambaAD.BackendUnavailable' `
+            -Category ResourceUnavailable `
+            -Message "The backend '$script:BackendCommand' was not found or is not executable."
+    }
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $script:BackendCommand
     $startInfo.ArgumentList.Add('request')
@@ -41,32 +75,58 @@ function Invoke-SambaADBackend {
         $diagnostic = $diagnosticTask.GetAwaiter().GetResult()
         $exitCode = $process.ExitCode
     } catch {
-        throw "Unable to run '$script:BackendCommand': $($_.Exception.Message)"
+        return New-SambaADFailure -ErrorId 'SambaAD.BackendUnavailable' `
+            -Category ResourceUnavailable `
+            -Message "Unable to run '$script:BackendCommand': $($_.Exception.Message)"
     } finally {
         $process.Dispose()
     }
 
-    if ([string]::IsNullOrWhiteSpace($output)) {
-        throw "The backend returned no JSON response. $diagnostic"
+    if (-not [string]::IsNullOrWhiteSpace($diagnostic)) {
+        Write-Debug "samba-ad-backend standard error: $diagnostic"
     }
-    try {
-        $response = $output | ConvertFrom-Json -Depth 8
-    } catch {
-        throw 'The backend returned an invalid JSON response.'
+    $problem = Test-SambaADEnvelope -Output $output -ExitCode $exitCode
+    if ($problem) {
+        return New-SambaADFailure -ErrorId 'SambaAD.ProtocolError' -Category ProtocolError `
+            -Message ("The backend answered outside the protocol ($problem); run the " +
+                'cmdlet with -Debug to see its standard error.')
     }
+    return $output | ConvertFrom-Json -Depth 8
+}
+
+# Names what is wrong with a backend answer, or returns nothing when it is a
+# version 1 envelope whose ok flag agrees with the exit code.
+function Test-SambaADEnvelope {
+    [CmdletBinding()]
+    param(
+        [Parameter()]
+        [AllowEmptyString()]
+        [string]$Output,
+
+        [Parameter(Mandatory)]
+        [int]$ExitCode
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Output)) {
+        return 'no JSON response'
+    }
+    if (-not (Test-Json -Json $Output -ErrorAction Ignore)) {
+        return 'invalid JSON'
+    }
+    $response = $Output | ConvertFrom-Json -Depth 8
     if (
+        $response -isnot [pscustomobject] -or
         -not $response.PSObject.Properties['version'] -or
         -not $response.PSObject.Properties['ok'] -or
         $response.version -ne 1 -or
         $response.ok -isnot [bool]
     ) {
-        throw 'The backend returned an invalid protocol envelope.'
+        return 'invalid envelope'
     }
     $expectedExitCode = if ($response.ok) { 0 } else { 1 }
-    if ($exitCode -ne $expectedExitCode) {
-        throw "The backend response did not match exit code $exitCode. $diagnostic"
+    if ($ExitCode -ne $expectedExitCode) {
+        return "exit code $ExitCode"
     }
-    return $response
 }
 
 # Converts a backend error envelope into a native PowerShell ErrorRecord.
@@ -99,6 +159,9 @@ function New-SambaADErrorRecord {
 }
 
 # Runs one read operation and emits the typed object, or the backend's error.
+# A script module reads $ErrorActionPreference from its own scope rather than
+# the caller's, so the caller's preference is brought in unless -ErrorAction
+# was given: 'Stop' set at the top of a script must stop on a missing object.
 function Invoke-SambaADRead {
     [CmdletBinding()]
     param(
@@ -118,6 +181,11 @@ function Invoke-SambaADRead {
         [string[]]$Properties = @()
     )
 
+    if (-not $Caller.MyInvocation.BoundParameters.ContainsKey('ErrorAction')) {
+        $ErrorActionPreference = $Caller.SessionState.PSVariable.GetValue(
+            'ErrorActionPreference'
+        )
+    }
     $request = @{
         version = 1
         operation = $Operation
@@ -128,20 +196,29 @@ function Invoke-SambaADRead {
         }
     }
     $response = Invoke-SambaADBackend -Request $request
+    if ($response -is [System.Management.Automation.ErrorRecord]) {
+        $Caller.WriteError($response)
+        return
+    }
     if (-not $response.ok) {
         $Caller.WriteError((New-SambaADErrorRecord $response.error))
         return
     }
-    $result = [pscustomobject]$response.result.properties
+    $result = $response.result.properties
     $result.PSObject.TypeNames.Insert(0, [string]$response.result.type)
+    $result | Add-Member -MemberType ScriptMethod -Name ToString -Force -Value {
+        [string]$this.DistinguishedName
+    }
     Write-Output $result
 }
 
-# Retrieves one user by distinguished name through the Samba ADWS endpoint.
+# Retrieves one user by distinguished name, GUID, SID or account name through
+# the Samba ADWS endpoint. A piped object binds by its DistinguishedName.
 function Get-ADUser {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory, Position = 0, ValueFromPipeline)]
+        [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [Alias('DistinguishedName')]
         [ValidateNotNullOrEmpty()]
         [string]$Identity,
 
@@ -158,11 +235,13 @@ function Get-ADUser {
     }
 }
 
-# Retrieves one computer by distinguished name through the Samba ADWS endpoint.
+# Retrieves one computer by distinguished name, GUID, SID or account name, the
+# trailing '$' optional. A piped object binds by its DistinguishedName.
 function Get-ADComputer {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory, Position = 0, ValueFromPipeline)]
+        [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [Alias('DistinguishedName')]
         [ValidateNotNullOrEmpty()]
         [string]$Identity,
 
@@ -179,11 +258,13 @@ function Get-ADComputer {
     }
 }
 
-# Retrieves one group by distinguished name through the Samba ADWS endpoint.
+# Retrieves one group by distinguished name, GUID, SID or account name through
+# the Samba ADWS endpoint. A piped object binds by its DistinguishedName.
 function Get-ADGroup {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory, Position = 0, ValueFromPipeline)]
+        [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [Alias('DistinguishedName')]
         [ValidateNotNullOrEmpty()]
         [string]$Identity,
 
@@ -200,11 +281,13 @@ function Get-ADGroup {
     }
 }
 
-# Retrieves one object of any class by distinguished name.
+# Retrieves one object of any class by distinguished name, GUID or SID. A
+# piped object binds by its DistinguishedName.
 function Get-ADObject {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory, Position = 0, ValueFromPipeline)]
+        [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [Alias('DistinguishedName')]
         [ValidateNotNullOrEmpty()]
         [string]$Identity,
 

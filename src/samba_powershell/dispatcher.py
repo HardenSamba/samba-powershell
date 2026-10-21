@@ -6,18 +6,15 @@ from typing import cast
 
 from samba_powershell.client_loader import ClientFactory, load_client_factory
 from samba_powershell.errors import BackendError
-from samba_powershell.operations import (
-    get_ad_computer,
-    get_ad_group,
-    get_ad_object,
-    get_ad_user,
-)
+from samba_powershell.object_classes import SPECS
+from samba_powershell.operations import get_object
 
+# Each backend operation reads one object of the class its cmdlet returns.
 OPERATIONS = {
-    "get_ad_user": get_ad_user,
-    "get_ad_computer": get_ad_computer,
-    "get_ad_group": get_ad_group,
-    "get_ad_object": get_ad_object,
+    "get_ad_user": SPECS["user"],
+    "get_ad_computer": SPECS["computer"],
+    "get_ad_group": SPECS["group"],
+    "get_ad_object": SPECS["object"],
 }
 
 
@@ -28,8 +25,8 @@ def dispatch(
 ) -> object:
     operation = cast(str, request["operation"])
     parameters = cast(dict[str, object], request["parameters"])
-    handler = OPERATIONS.get(operation)
-    if handler is None:
+    spec = OPERATIONS.get(operation)
+    if spec is None:
         raise BackendError(
             f"Operation '{operation}' is not supported.",
             "SambaAD.UnsupportedOperation",
@@ -37,4 +34,4 @@ def dispatch(
             operation,
         )
     factory = client_factory or load_client_factory()
-    return handler(parameters, factory)
+    return get_object(parameters, factory, spec)

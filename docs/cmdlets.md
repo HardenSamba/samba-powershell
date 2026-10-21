@@ -4,27 +4,54 @@
 
 The read cmdlets of ticket #3. Four are implemented end to end:
 
-| Cmdlet | Returns | Backend operation |
-|---|---|---|
-| `Get-ADUser` | `SambaAD.User` | `get_ad_user` |
-| `Get-ADComputer` | `SambaAD.Computer` | `get_ad_computer` |
-| `Get-ADGroup` | `SambaAD.Group` | `get_ad_group` |
-| `Get-ADObject` | `SambaAD.Object` | `get_ad_object` |
+| Cmdlet | Returns | Backend operation | Identity forms |
+|---|---|---|---|
+| `Get-ADUser` | `SambaAD.User` | `get_ad_user` | DN, GUID, SID, account name |
+| `Get-ADComputer` | `SambaAD.Computer` | `get_ad_computer` | DN, GUID, SID, account name (`$` optional) |
+| `Get-ADGroup` | `SambaAD.Group` | `get_ad_group` | DN, GUID, SID, account name |
+| `Get-ADObject` | `SambaAD.Object` | `get_ad_object` | DN, GUID, SID |
 
-Each takes `-Identity` (a distinguished name — see below), `-Server` (or the
-`SAMBA_AD_SERVER` environment variable) and `-Properties`. Each returns a typed
-object the format file renders as a table, and each writes a non-terminating
-`ErrorRecord` on failure so a pipeline under `-ErrorAction SilentlyContinue`
-continues. A cmdlet given an object of another class — `Get-ADUser` on a group —
-reports `SambaAD.ObjectNotFound`, the way Windows reports it, rather than
-finding the object and complaining about its type.
+Each takes `-Identity`, `-Server` (or the `SAMBA_AD_SERVER` environment
+variable) and `-Properties`. Each returns a typed object the format file renders
+as a table, and each writes a non-terminating `ErrorRecord` on failure so a
+pipeline under `-ErrorAction SilentlyContinue` continues.
 
-The translation, conversion and identity rules below are implemented and tested
-offline, with no directory reachable. The search parameters that would carry
-them to a server are listed as unsupported at the end, because the client
-exposed by `samba-adws` currently offers a read by distinguished name and no
-enumeration. That client API is tracked in
-[samba-adws#7](https://github.com/HardenSamba/samba-adws/issues/7).
+A cmdlet given an object of another class — `Get-ADUser` on a group — reports
+`SambaAD.ObjectNotFound`, the way Windows reports it, rather than finding the
+object and complaining about its type. `Get-ADUser` also refuses computers,
+although the `computer` class derives from `user` in the schema: computers
+belong to `Get-ADComputer`, as on Windows.
+
+## The pipeline
+
+`-Identity` binds from the pipeline by value, so distinguished names, GUIDs,
+SIDs and account names can be piped as strings, and by property name through
+its `DistinguishedName` alias, so any object carrying a `DistinguishedName`
+property binds — the cmdlets' own output included:
+
+```powershell
+Get-ADUser jdoe | Get-ADObject -Properties whenChanged
+Get-ADGroup 'Domain Admins' -Properties member |
+    Select-Object -ExpandProperty member | Get-ADUser -ErrorAction SilentlyContinue
+```
+
+A returned object converts to its distinguished name as a string, as a Windows
+`ADObject` does, so `"$user"` is the DN.
+
+Each object costs one backend process and at least one ADWS exchange, about
+0.4 s on a controller on the local network, so a long pipeline is paced by
+that rather than by PowerShell. Streaming several objects into `Format-Table`
+fixes its column widths from the first rows; collect the results or use
+`-AutoSize` when the widths matter.
+
+## Error preference
+
+The cmdlets honour `$ErrorActionPreference` as the caller set it, in the
+caller's own scope: a script that sets `'Stop'` at its top stops on a missing
+object, exactly as it would with the Windows module. An explicit
+`-ErrorAction` still takes precedence. A script module would otherwise read
+the preference from its own scope only, which is the PowerShell behaviour the
+cmdlets work around.
 
 ## Where values are converted
 
@@ -35,34 +62,43 @@ are already typed. The PowerShell half formats; it does not decode.
 
 ## Identity resolution
 
-`-Identity` is classified by its own shape, in this order.
+`-Identity` is classified by its own shape, in this order, after the
+whitespace around it is dropped.
 
-| Form | Recognised by | Matched against |
+| Form | Recognised by | Reaches the directory as |
 |---|---|---|
-| SID | `S-1-` followed by numeric parts | `objectSid`, textual form |
-| GUID | eight-four-four-four-twelve hex digits | `objectGUID`, escaped little-endian bytes |
-| Distinguished name | a leading `attribute=` component | `distinguishedName` |
-| Account name | anything else | `sAMAccountName` |
+| Extended reference | `<GUID=...>` or `<SID=...>` | itself |
+| SID | `S-1-` followed by numeric parts | `<SID=S-1-...>` |
+| GUID | eight-four-four-four-twelve hex digits, braces optional | `<GUID=...>` |
+| Distinguished name | a leading `attribute=` component | itself, once it parses |
+| Account name | anything else | a `sAMAccountName` search |
 
-A GUID cannot travel as text: the directory stores it little-endian, so the
-filter carries the byte sequence rather than the printed form.
+The extended forms are LDAP's own: the directory resolves `<SID=...>` and
+`<GUID=...>` to the object itself, so a SID or a GUID costs no search. A
+distinguished name that does not parse — an empty component, an empty value, a
+trailing lone backslash — is refused with `SambaAD.InvalidIdentity` before
+anything travels, rather than answered with a not-found from a server that never
+parsed it.
 
-**Live, only the distinguished name form reaches the wire.** The other three
-forms require matching a filter against the directory, which needs the
-enumeration the supported client does not offer yet. A cmdlet given a
-sAMAccountName, SID or GUID identity refuses with
-`SambaAD.IdentityNotResolvable` and says to give a distinguished name — a
-stated gap rather than an enumeration that silently does not happen. The
-classification and the filters each form implies are implemented and tested,
-so resolution lights up when the client gains enumeration.
+An account name is resolved the way Windows resolves it: a subtree search of
+the domain's default naming context for that `sAMAccountName`, scoped to the
+cmdlet's class, then a read of the one object found. `Get-ADComputer` also
+matches the name with a trailing `$`, which a computer account carries and
+Windows lets the caller leave out. `Get-ADObject` takes no account name, as on
+Windows; it refuses one with `SambaAD.IdentityNotResolvable`, pointing at the
+cmdlet that does.
 
 When an identity matches nothing, the cmdlet writes a non-terminating
-`ErrorRecord` whose `FullyQualifiedErrorId` is `SambaAD.ObjectNotFound` and
-whose `TargetObject` is the identity, so a pipeline under
-`-ErrorAction SilentlyContinue` continues. When an identity matches more than
-one object, the cmdlet fails with `SambaAD.IdentityNotUnique` rather than
-choosing one, because silently picking a match would make the result depend on
-directory ordering.
+`ErrorRecord` whose `FullyQualifiedErrorId` is `SambaAD.ObjectNotFound`, whose
+`TargetObject` is the identity as the caller gave it, and whose message is
+`Cannot find an object with identity '<identity>'.`. When an account name
+matches more than one object, the cmdlet fails with `SambaAD.IdentityNotUnique`
+rather than choosing one, because silently picking a match would make the result
+depend on directory ordering.
+
+For filters, the same classification also yields the LDAP assertion each form
+implies; a GUID there travels as escaped little-endian bytes, because the
+directory stores it that way. That half serves `-Filter` once it is wired.
 
 ## Filter operators
 
@@ -99,26 +135,43 @@ and NUL become their hex escapes. This is the injection surface of the module,
 so a value containing `*` and `)` is matched literally and cannot close its own
 assertion. Under `-like` alone, `*` stays a wildcard while its neighbours are
 still escaped. Attribute names are checked against the RFC 4512 spelling rather
-than interpolated unchecked.
+than interpolated unchecked. The account-name search escapes the name the same
+way.
 
 ## Value conversions
 
+The endpoint carries every value as text or as base64. What an attribute holds
+is decided by its syntax in the schema, which the backend reads for every
+property asked for by name, in one search of the schema naming context.
+
 | Attribute kind | Stored as | Returned as |
 |---|---|---|
-| `objectSid` | binary, MS-DTYP layout | `S-1-5-21-...` text |
+| `objectSid`, and any SID-syntax attribute such as `tokenGroups` | binary, MS-DTYP layout | `S-1-5-21-...` text |
 | `objectGUID` | binary, first three fields little-endian | GUID text |
-| `whenCreated`, `whenChanged` | generalised time | timezone-aware datetime |
-| `pwdLastSet`, `accountExpires`, `lastLogonTimestamp` | 100-nanosecond intervals since 1601 | datetime, or nothing |
+| Any other binary attribute | binary | base64 text |
+| `whenCreated`, `whenChanged`, and any time-syntax attribute | generalised time | timezone-aware datetime |
+| `pwdLastSet`, `accountExpires`, `lastLogonTimestamp`, `lastLogon`, `badPasswordTime`, `lockoutTime` | 100-nanosecond intervals since 1601 | datetime, or nothing |
+| Integer and large-integer syntaxes, such as `userAccountControl` or `uSNChanged` | number | integer |
+| Boolean syntax, such as `isCriticalSystemObject` | `TRUE` or `FALSE` | boolean |
 | `Enabled` | not stored | derived from `userAccountControl` |
+| `GroupCategory`, `GroupScope` | not stored | derived from `groupType` |
 
 Both `0` and `0x7FFFFFFFFFFFFFFF` are sentinels meaning "never", not dates at
 either end of the range, and decode to nothing rather than to a year 1601 or
-30828 timestamp.
+30828 timestamp. A time-syntax value in the two-digit-year UTC-time form is left
+as the server sent it rather than guessed at.
 
 `Enabled` is not a directory attribute. It is the `ACCOUNTDISABLE` bit `0x2` of
 `userAccountControl`, read the other way round. Contract 6.1 forbids inventing
 an attribute for it, and a divergent schema stops a Windows controller
 replicating.
+
+An attribute the schema declares multi-valued is a list, even when it holds a
+single value, and an empty list when it was asked for by name and holds none:
+its shape never depends on how many values it has. `description` is the one
+exception on users, computers and groups: the schema declares it multi-valued,
+but the directory keeps one value on the security principals it manages, and
+Windows shows it as text there.
 
 ## Default property sets
 
@@ -132,30 +185,81 @@ not replace it, which is the behaviour administrators already expect.
 | `Get-ADGroup` | DistinguishedName, GroupCategory, GroupScope, Name, ObjectClass, ObjectGUID, SamAccountName, SID | decided |
 | `Get-ADObject` | DistinguishedName, Name, ObjectClass, ObjectGUID | decided |
 
-Constructed attributes such as `tokenGroups` and `canonicalName` are computed
-by the server and returned only when asked for by name. They do not appear
-under `-Properties *`.
+Every default property is present on every object, `$null` when the directory
+holds no value for it — a user without a surname still has `Surname`. Every
+property asked for by name is present the same way. One result set therefore
+has one shape: `Set-StrictMode` scripts can read any property, and
+`Export-Csv` or `Select-Object *`, which take their columns from the first
+object, lose nothing from the objects after it.
 
 How the answer is rendered, in Python, before it crosses the JSON boundary:
 
 - The default set's attributes appear under their PowerShell names —
   `sn` as `Surname`, `objectSid` as `SID`, `dNSHostName` as `DNSHostName`.
-  An extra attribute asked for by name keeps its LDAP display name, which is
-  what Windows does with `-Properties mail`.
+  Asked for by name as well, such an attribute also keeps its LDAP name when
+  the two differ by more than case, as Windows shows `sn` beside `Surname`.
+- An attribute outside the cmdlet's default set keeps its LDAP display name,
+  as the schema spells it, which is what Windows does with `-Properties mail`.
+  `Get-ADObject -Properties objectSid` therefore shows `objectSid`, not `SID`.
 - `Enabled`, `GroupCategory` and `GroupScope` are derived from
   `userAccountControl` and `groupType`, which are fetched in their place and
-  shown raw only when asked for by name.
+  shown raw only when asked for by name or under `-Properties *`.
 - `objectClass` reduces to the class the object is: the directory returns the
   hierarchy from `top` downwards, and the last value is the object's own class.
-- `objectGUID` and `objectSid` are decoded from their binary forms; any other
-  binary value is base64 text rather than a decode guess.
-- Multi-valued attributes are lists. Everything in the rendered object survives
-  JSON, because JSON is the channel it crosses to PowerShell.
+- Properties are ordered by name without regard to case, as Windows lists them.
+- Everything in the rendered object survives JSON, because JSON is the channel
+  it crosses to PowerShell.
+
+## -Properties
+
+Each entry is one LDAP display name. A name the schema does not define is
+refused with `SambaAD.InvalidProperty`, naming it, the way Windows refuses it,
+rather than returning an object that silently lacks it. A name that cannot be an
+attribute at all is refused before anything travels: several names in one string
+(`'mail,memberOf'` rather than `mail,memberOf`), or an attribute option such as
+`member;range=0-99`, which the endpoint does not carry. Windows extended
+property names that are not attributes, such as `EmailAddress` or
+`LastLogonDate`, are refused the same way; ask for the attribute behind them.
+
+`-Properties *` reads the whole object and shows every attribute it stores,
+the derivation sources included. Constructed attributes such as `tokenGroups`
+and `canonicalName`, which the server computes on read, and the reference
+attributes the endpoint adds of its own, do not appear under `-Properties *`;
+name one beside the wildcard — `-Properties *,canonicalName` — to have it.
+
+The schema is consulted only when a property is named, so a read of the default
+set costs one ADWS exchange. Naming properties adds a RootDSE read and a schema
+search; an account-name identity adds a RootDSE read and a search of its own.
+
+## Servers and failures
+
+`-Server` names the domain controller by its DNS host name. The transport
+authenticates with Kerberos as the service `host/<name>`, so an IP address or an
+alias has no principal to authenticate against. `host:port` reaches ADWS on
+another port than 9389. A value of only whitespace is no server, and fails like
+an absent one with `SambaAD.ServerRequired`.
+
+A failure to reach or authenticate to the endpoint is reported against the
+server, under the client's code `SambaAD.TransportError`, with a category
+saying what failed and the usual cause named:
+
+| Category | When | The message adds |
+|---|---|---|
+| `AuthenticationError` | no Kerberos ticket | run `kinit`, or set `KRB5CCNAME` |
+| `AuthenticationError` | no principal for the server name | use the DNS host name, not an IP or alias |
+| `ConnectionError` | the name does not resolve, or nothing listens | check `-Server`, or whether samba-adws runs |
+| `OperationTimeout` | no answer within 30 seconds | |
+
+A backend that cannot be started reports `SambaAD.BackendUnavailable`, and one
+that answers outside the protocol reports `SambaAD.ProtocolError`; both are
+non-terminating like every other failure, and the backend's standard error is
+written to the debug stream, shown with `-Debug`, rather than into the message.
 
 ## Not supported yet
 
-These are parsed and translated, but no cmdlet accepts them, because the
-supported client offers no enumeration to carry them to a server.
+These are parsed and translated, but no cmdlet accepts them yet. The
+`samba-adws` search client the account-name lookup uses can carry them; wiring
+them, with paging, is the next step of ticket #3.
 
 - `-Filter` and `-LDAPFilter`
 - `-SearchBase` and `-SearchScope`
@@ -165,7 +269,3 @@ Paging goes through WS-Enumeration `Pull` carrying the LDAP paging control,
 specified in MS-WSPELD. A default page size that silently truncates is the
 classic failure here and it looks like success, so the count must be checked
 against the same query run through `ldbsearch` before paging is claimed.
-
-The cmdlets beyond `Get-ADUser` are not implemented. `Get-ADUser` currently
-accepts a distinguished name only, resolves nothing else, and reads through
-`get_by_dn`.

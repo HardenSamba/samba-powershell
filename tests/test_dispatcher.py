@@ -9,41 +9,11 @@ import pytest
 from samba_powershell.dispatcher import dispatch
 from samba_powershell.errors import BackendError
 from samba_powershell.operations import DEFAULT_USER_PROPERTIES
+from tests.backend_calls import answered, request_for
 from tests.fake_client import FakeClient
 
 ALICE_DN = "CN=Alice,CN=Users,DC=example,DC=com"
 SALES_DN = "CN=Sales,DC=example,DC=com"
-
-
-# Builds a valid request for one operation against the recorded directory.
-def request_for(operation: str, identity: str,
-                properties: list[str] | None = None) -> dict[str, object]:
-    return {
-        "version": 1,
-        "operation": operation,
-        "parameters": {
-            "identity": identity,
-            "server": "dc1.example.com",
-            "properties": properties or [],
-        },
-    }
-
-
-# Dispatches one request and returns the rendered properties and the client.
-def answered(request: dict[str, object]) -> tuple[dict[str, object], FakeClient]:
-    made: list[FakeClient] = []
-
-    # Builds the fake while keeping hold of it, so the test can read what the
-    # backend actually asked the client for.
-    def factory(server: str, port: int, timeout: float) -> FakeClient:
-        made.append(FakeClient(server, port, timeout))
-        return made[-1]
-
-    result = dispatch(request, factory)
-    assert isinstance(result, dict)
-    properties = result["properties"]
-    assert isinstance(properties, dict)
-    return properties, made[0]
 
 
 # The default read renders the decided property set under its PowerShell names:
@@ -60,6 +30,13 @@ def test_get_ad_user_renders_the_decided_defaults() -> None:
     assert properties["SID"] == "S-1-5-21-1-2-3-1105"
     assert properties["Enabled"] is True
     assert "userAccountControl" not in properties
+
+
+# A read of the default set costs one exchange: no schema lookup, no search.
+def test_a_default_read_asks_nothing_else() -> None:
+    _, client = answered(request_for("get_ad_user", ALICE_DN))
+    assert client.searches == []
+    assert client.references == [ALICE_DN]
 
 
 # -Properties adds to the default set rather than replacing it, and the extra
@@ -93,10 +70,11 @@ def test_times_lists_and_json_safety() -> None:
     assert json.dumps(properties)
 
 
-# A derivation source asked for by name appears raw beside the derived value.
+# A derivation source asked for by name appears raw beside the derived value,
+# as the integer its Integer syntax says it is.
 def test_a_derivation_source_appears_when_asked_for() -> None:
     properties, _ = answered(request_for("get_ad_user", ALICE_DN, ["userAccountControl"]))
-    assert properties["userAccountControl"] == "512"
+    assert properties["userAccountControl"] == 512
     assert properties["Enabled"] is True
 
 
@@ -124,15 +102,6 @@ def test_get_ad_object_takes_any_class() -> None:
     properties, client = answered(request_for("get_ad_object", SALES_DN))
     assert properties["ObjectClass"] == "group"
     assert client.requested == ["distinguishedName", "name", "objectClass", "objectGUID"]
-
-
-# An identity in a form the supported client cannot resolve is refused by name,
-# not silently searched for.
-def test_a_non_dn_identity_is_refused_by_name() -> None:
-    with pytest.raises(BackendError) as raised:
-        dispatch(request_for("get_ad_user", "alice"), FakeClient)
-    assert raised.value.error_id == "SambaAD.IdentityNotResolvable"
-    assert "distinguished name" in raised.value.message
 
 
 # Missing endpoints fail before the optional samba-adws import is needed.
