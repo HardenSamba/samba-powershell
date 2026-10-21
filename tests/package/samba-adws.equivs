@@ -1,0 +1,13 @@
+Section: misc
+Priority: optional
+Standards-Version: 4.6.2
+
+Package: samba-adws
+Version: 1.0.1
+Maintainer: CaracalC <martin.ptit@gmail.com>
+Architecture: all
+Description: stand-in for samba-adws in the samba-powershell package test
+ The samba-adws repository is private, so the CI workflow of samba-powershell
+ cannot build the real package. This empty package satisfies the dependency so
+ samba-powershell can be installed, exercised and purged in a clean container;
+ the cmdlets then report that the samba-adws client is missing.

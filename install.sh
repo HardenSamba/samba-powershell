@@ -1,58 +1,127 @@
 #!/bin/sh
 #
-# Manual installation of samba-powershell on a Debian or Ubuntu system without
-# the package archive. It installs the same files the package does:
+# Manual installation of samba-powershell on a Debian or Ubuntu system that
+# cannot reach the package archive, and its removal with --uninstall.
 #
-#   /usr/lib/python3/dist-packages/samba_powershell/   the backend
-#   /usr/local/bin/samba-ad-backend                    the backend entry point
-#   /usr/share/samba-powershell/SambaAD/               the PowerShell module
-#   /etc/profile.d/samba-powershell.sh                 the module search path
+# The Debian package is the reference method. This installs the same two
+# halves, the Python backend and the SambaAD PowerShell module, under
+# /usr/local, which Debian keeps for what the administrator installs by hand,
+# so it never writes a file dpkg owns:
 #
-# The Debian package is the reference method; this exists for a system that
-# cannot reach the archive. It is idempotent.
+#   /usr/local/lib/samba-powershell/samba_powershell/   the backend
+#   /usr/local/bin/samba-ad-backend                     its launcher
+#   /usr/local/share/powershell/Modules/SambaAD/        the PowerShell module
+#
+# It refuses to run while the package is installed, since both would answer to
+# the same command. It checks its own result before it reports success. It is
+# idempotent: running it again replaces the files with the checkout's.
+#
+# Usage: sh install.sh [--uninstall]
 
 set -eu
 
-MODULE="samba-powershell"
-SOURCE="$(cd "$(dirname "$0")" && pwd)"
-PACKAGE_DIR="/usr/lib/python3/dist-packages/samba_powershell"
-MODULE_DIR="/usr/share/samba-powershell/SambaAD"
+NAME=samba-powershell
+SOURCE=$(cd "$(dirname "$0")" && pwd)
+LIB=/usr/local/lib/samba-powershell
+LAUNCHER=/usr/local/bin/samba-ad-backend
+MODULES=/usr/local/share/powershell/Modules
+MODULE=$MODULES/SambaAD
+MODULE_FILES="SambaAD.psd1 SambaAD.psm1 SambaAD.Format.ps1xml"
 
-if [ "$(id -u)" -ne 0 ]; then
-    echo "${MODULE}: this installer must run as root" >&2
+fail() {
+    echo "$NAME: $*" >&2
     exit 1
-fi
+}
 
-echo "${MODULE}: installing the backend"
-rm -rf "${PACKAGE_DIR}"
-install -d -m 0755 "${PACKAGE_DIR}"
-cp -a "${SOURCE}/src/samba_powershell/." "${PACKAGE_DIR}/"
+warn() {
+    echo "$NAME: warning: $*" >&2
+}
 
-install -d -m 0755 /usr/local/bin
-cat >/usr/local/bin/samba-ad-backend <<'LAUNCHER'
-#!/bin/sh
-exec /usr/bin/python3 -m samba_powershell.cli "$@"
+package_installed() {
+    status=$(dpkg-query -W -f='${db:Status-Status}' "$NAME" 2>/dev/null || true)
+    [ "$status" = installed ]
+}
+
+uninstall() {
+    if [ -L "$MODULE" ]; then
+        fail "$MODULE is the package's link; remove the package with apt instead"
+    fi
+    rm -rf "$LIB" "$MODULE"
+    rm -f "$LAUNCHER"
+    rmdir --ignore-fail-on-non-empty "$MODULES" /usr/local/share/powershell 2>/dev/null || true
+    echo "$NAME: removed the manual installation"
+}
+
+install_backend() {
+    install -d -m 0755 "$LIB" /usr/local/bin
+    staging="$LIB/samba_powershell.new"
+    rm -rf "$staging"
+    cp -R "$SOURCE/src/samba_powershell" "$staging"
+    find "$staging" -name __pycache__ -type d -prune -exec rm -rf {} +
+    find "$staging" -type d -exec chmod 0755 {} +
+    find "$staging" -type f -exec chmod 0644 {} +
+    rm -rf "$LIB/samba_powershell"
+    mv "$staging" "$LIB/samba_powershell"
+    launcher=$(mktemp)
+    cat >"$launcher" <<LAUNCHER
+#!$PYTHON
+import sys
+sys.path.insert(0, "$LIB")
+from samba_powershell.cli import main
+sys.exit(main())
 LAUNCHER
-chmod 0755 /usr/local/bin/samba-ad-backend
+    install -m 0755 "$launcher" "$LAUNCHER"
+    rm -f "$launcher"
+}
 
-echo "${MODULE}: installing the PowerShell module"
-rm -rf "${MODULE_DIR}"
-install -d -m 0755 "${MODULE_DIR}"
-cp -a "${SOURCE}/powershell/SambaAD/." "${MODULE_DIR}/"
+install_module() {
+    rm -rf "$MODULE"
+    install -d -m 0755 "$MODULE"
+    for file in $MODULE_FILES; do
+        install -m 0644 "$SOURCE/powershell/SambaAD/$file" "$MODULE/$file"
+    done
+}
 
-install -m 0644 "${SOURCE}/debian/psmodulepath.sh" /etc/profile.d/samba-powershell.sh
+verify() {
+    "$LAUNCHER" status | grep -qx 'samba-ad-backend: ready' \
+        || fail "the backend launcher $LAUNCHER does not start"
+    if command -v pwsh >/dev/null 2>&1; then
+        pwsh -NoProfile -NonInteractive -Command \
+            "if (-not (Get-Module -ListAvailable SambaAD | Where-Object ModuleBase -eq '$MODULE')) { exit 1 }" \
+            || fail "pwsh does not find the SambaAD module in $MODULE"
+    else
+        warn "pwsh is not installed; the module needs PowerShell 7.4 or later, see docs/packaging.md"
+    fi
+    if ! "$PYTHON" -c 'import samba_adws.search_client' >/dev/null 2>&1; then
+        warn "the samba-adws client is not installed; the cmdlets need samba-adws 1.0.0 or later"
+    fi
+}
 
-cat <<NEXT
+[ "$(id -u)" -eq 0 ] || fail "this installer must run as root"
 
-${MODULE} is installed. PowerShell finds the module on the next login shell, or
-in this one with:
+case "${1:-}" in
+    --uninstall)
+        uninstall
+        exit 0
+        ;;
+    "")
+        ;;
+    *)
+        fail "unknown argument '$1'; usage: sh install.sh [--uninstall]"
+        ;;
+esac
 
-    export PSModulePath="/usr/share/samba-powershell:\${PSModulePath}"
+if package_installed; then
+    fail "the $NAME package is installed; remove it with apt before a manual installation"
+fi
+if [ -L "$MODULE" ]; then
+    fail "$MODULE is a link left by the package; purge the package first"
+fi
+PYTHON=$(command -v python3) || fail "python3 is required"
+"$PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 11))' \
+    || fail "Python 3.11 or later is required"
 
-Then, with pwsh installed and a Kerberos ticket for the domain:
-
-    kinit administrator@YOUR.REALM
-    pwsh -c 'Import-Module SambaAD; Get-ADUser -Identity "CN=...,DC=...,DC=..." -Server dc1.your.realm'
-
-pwsh is not in Debian stable; see docs/packaging.md.
-NEXT
+install_backend
+install_module
+verify
+echo "$NAME: installed; open a new pwsh and run Get-ADUser -Server <dc>"

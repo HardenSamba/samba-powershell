@@ -1,0 +1,51 @@
+.TH SAMBA-AD-BACKEND 1 "October 2026" "samba-powershell 0.1.0" "User Commands"
+.SH NAME
+samba-ad-backend \- backend process of the SambaAD PowerShell module
+.SH SYNOPSIS
+.B samba-ad-backend
+.RB [ \-h ]
+.RB [ \-\-version ]
+.BR request | status
+.SH DESCRIPTION
+.B samba-ad-backend
+is the Python half of the SambaAD PowerShell module shipped by
+samba-powershell. The cmdlets, such as
+.BR Get-ADUser ,
+start it once per call, write one JSON request on its standard input and read
+one JSON response from its standard output. It reads the directory through the
+samba-adws Active Directory Web Services client, authenticated with the
+caller's Kerberos ticket.
+.PP
+It is an internal process boundary, not a command meant for interactive use:
+use the cmdlets from
+.BR pwsh (1)
+instead.
+.SH COMMANDS
+.TP
+.B request
+Reads one request from standard input and writes one response to standard
+output. It exits 0 when the response reports success and 1 when it reports a
+failure.
+.TP
+.B status
+Reports whether the backend can start, without touching the network. It prints
+.I samba-ad-backend: ready
+and exits 0.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Shows a summary of the commands.
+.TP
+.B \-\-version
+Prints the version.
+.SH ENVIRONMENT
+.TP
+.B KRB5CCNAME
+The Kerberos credential cache the backend authenticates with, inherited from
+the cmdlet's process.
+.TP
+.B SAMBA_AD_SERVER
+The domain controller used when a request names none.
+.SH SEE ALSO
+.BR pwsh (1),
+.BR kinit (1)

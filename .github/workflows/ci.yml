@@ -54,3 +54,40 @@ jobs:
       - name: Measure PowerShell to Python transports
         shell: pwsh
         run: ./benchmarks/transport.ps1 -PythonPath (Get-Command python3).Source
+
+  package:
+    runs-on: ubuntu-latest
+    container: debian:stable
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the build tooling
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential debhelper dh-python \
+            pybuild-plugin-pyproject python3-all python3-setuptools python3-pytest \
+            python3-yaml lintian equivs ca-certificates curl
+      - name: Build the package
+        run: |
+          dpkg-buildpackage -us -uc -b
+          mkdir dist
+          mv ../samba-powershell_*.deb ../samba-powershell_*.buildinfo \
+            ../samba-powershell_*.changes dist/
+          dpkg-deb --info dist/samba-powershell_*.deb
+          dpkg-deb --contents dist/samba-powershell_*.deb
+      - name: Lintian
+        run: lintian --fail-on error --display-info dist/samba-powershell_*.deb
+      - name: Install PowerShell and a samba-adws stand-in
+        shell: bash
+        run: |
+          . /etc/os-release
+          curl -fsSLo /tmp/packages-microsoft-prod.deb \
+            "https://packages.microsoft.com/config/debian/${VERSION_ID}/packages-microsoft-prod.deb"
+          dpkg -i /tmp/packages-microsoft-prod.deb
+          apt-get update
+          apt-get install -y --no-install-recommends powershell
+          cd /tmp && equivs-build "$GITHUB_WORKSPACE/tests/package/samba-adws.equivs"
+          apt-get install -y /tmp/samba-adws_1.0.1_all.deb
+      - name: Install, exercise and purge the package
+        run: sh tests/test_package.sh deb dist/samba-powershell_*.deb
+      - name: Install, exercise and remove the manual installation
+        run: sh tests/test_package.sh manual

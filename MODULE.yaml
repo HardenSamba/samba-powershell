@@ -27,3 +27,13 @@ provides:
   - Get-ADObject
 writes:
   config_dir: /etc/hardensamba/samba-powershell/
+  paths:
+  - /usr/bin/samba-ad-backend
+  - /usr/lib/python3/dist-packages/samba_powershell/
+  - /usr/lib/python3/dist-packages/samba_powershell-*.dist-info/
+  - /usr/share/samba-powershell/
+  - /usr/share/doc/samba-powershell/
+  - /usr/share/man/man1/samba-ad-backend.1.gz
+  - /usr/local/share/powershell/Modules/SambaAD/
+  - /usr/local/bin/samba-ad-backend
+  - /usr/local/lib/samba-powershell/

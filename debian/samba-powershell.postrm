@@ -1,0 +1,21 @@
+#!/bin/sh
+# Removes the link postinst made, only when it is still the package's, and the
+# directories leading to it when nothing else uses them.
+set -e
+
+LINK=/usr/local/share/powershell/Modules/SambaAD
+TARGET=/usr/share/samba-powershell/Modules/SambaAD
+
+case "$1" in
+    remove|purge)
+        if [ -L "$LINK" ] && [ "$(readlink "$LINK")" = "$TARGET" ]; then
+            rm -f "$LINK"
+        fi
+        rmdir --ignore-fail-on-non-empty /usr/local/share/powershell/Modules \
+            /usr/local/share/powershell 2>/dev/null || true
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

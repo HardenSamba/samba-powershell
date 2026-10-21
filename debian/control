@@ -1,14 +1,28 @@
 Source: samba-powershell
 Section: admin
 Priority: optional
-Maintainer: HardenSamba <noreply@example.invalid>
-Build-Depends: debhelper-compat (= 13), dh-python, pybuild-plugin-pyproject,
- python3-all, python3-setuptools
+Maintainer: CaracalC <martin.ptit@gmail.com>
+Build-Depends: debhelper-compat (= 13),
+               dh-python,
+               pybuild-plugin-pyproject,
+               python3-all,
+               python3-pytest <!nocheck>,
+               python3-setuptools
 Standards-Version: 4.6.2
+Homepage: https://github.com/HardenSamba/samba-powershell
 Rules-Requires-Root: no
 
 Package: samba-powershell
 Architecture: all
-Depends: ${python3:Depends}, ${misc:Depends}, powershell, samba-adws (>= 1.0.0)
-Description: PowerShell on Linux for Samba Active Directory administration.
- Provides the Active Directory cmdlets on Linux, so a domain can be administered from a terminal without a Windows workstation.
+Depends: powershell,
+         samba-adws (>= 1.0.0),
+         ${misc:Depends},
+         ${python3:Depends}
+Description: PowerShell cmdlets for Samba Active Directory administration
+ Provides the Active Directory cmdlets Windows administrators know, such as
+ Get-ADUser, Get-ADComputer, Get-ADGroup and Get-ADObject, on Linux, so a Samba
+ domain can be administered from a terminal without a Windows workstation.
+ .
+ The cmdlets are a PowerShell module backed by a Python process that reads the
+ directory through the samba-adws Active Directory Web Services client, with the
+ caller's Kerberos ticket.

@@ -16,8 +16,9 @@ speaking to a Samba domain controller.
 **Read cmdlets working against a live domain; not a packaged release.**
 `Get-ADUser`, `Get-ADComputer`, `Get-ADGroup` and `Get-ADObject` read a Samba
 domain through the `samba-adws` client. They have been checked on a Samba 4.17
-controller running samba-adws 1.0.1, value by value against `ldbsearch`. The
-write cmdlets and an installable package are not done.
+controller running samba-adws 1.0.1, value by value against `ldbsearch`. They
+install as a Debian package or through `install.sh`, both checked in CI. The
+write cmdlets are not done, and the package is not published yet.
 
 What is actually in this repository today:
 
@@ -25,10 +26,10 @@ What is actually in this repository today:
 |---|---|
 | A typed Python backend and JSON envelope | The write cmdlet surface |
 | A `SambaAD` PowerShell module with four read cmdlets | `-Filter`, `-LDAPFilter`, `-SearchBase` and paging |
-| Identity by distinguished name, GUID, SID or account name | A built or published package |
-| Offline Python and PowerShell tests, and a live acceptance harness | An `install.sh`, and any contract or coding standard check in CI |
-| A Debian packaging skeleton under `debian/` | A configuration file, or code that reads one |
-| A CI workflow on plain Debian: `mypy --strict`, pytest and the PowerShell tests | |
+| Identity by distinguished name, GUID, SID or account name | A package published to the ecosystem archive |
+| Offline Python and PowerShell tests, and a live acceptance harness | Any contract or coding standard check in CI |
+| Debian packaging under `debian/`, and `install.sh` for a system without the archive | A configuration file, or code that reads one |
+| A CI workflow on plain Debian: `mypy --strict`, pytest, the PowerShell tests, and the package built, linted, installed and purged | |
 | `MODULE.yaml`, declaring the intended surface | |
 
 The module is split between a PowerShell cmdlet surface and a Python backend,
@@ -115,50 +116,52 @@ Taken from `MODULE.yaml`, which is the authoritative declaration.
 a workstation is the usual place. Installing it on the controller is supported,
 for administering the machine you are logged into.
 
-Two honest notes on that dependency list:
+Two notes on that dependency list:
 
 - `samba-adws` must be reachable. The cmdlets are a client. A domain controller
   running the ADWS service, on TCP 9389, is what they talk to.
-- The manifest declares `powershell` as a Debian package dependency. Where that
-  package comes from on a plain Debian system is not settled in this repository,
-  and the ecosystem contract requires runtime dependencies to exist as Debian
-  packages in stable. Resolving that is part of the packaging work, not
-  something already solved.
+- `powershell` is not in Debian stable. The package depends on it all the same
+  and the documented source is Microsoft's APT repository;
+  [`docs/packaging.md`](docs/packaging.md) gives the commands and the reasoning,
+  and whether that satisfies contract rule 7.2 is open in
+  [hardensamba-modulekit#6](https://github.com/HardenSamba/hardensamba-modulekit/issues/6).
 
 ## Installation
 
-### From the package archive
+[`docs/packaging.md`](docs/packaging.md) covers both ways in full, and compares
+them.
 
-Not available. The ecosystem APT repository is `hardensamba-apt`, and no
-`samba-powershell` package has been built or published to it. When it exists,
-installation will be:
+### The package
+
+The ecosystem APT repository is `hardensamba-apt`, which does not publish
+`samba-powershell` yet. Build the package from a checkout, then install it with
+PowerShell and samba-adws already installed:
 
 ```bash
-sudo apt update
-sudo apt install samba-powershell
+dpkg-buildpackage -us -uc -b
+sudo apt install ../samba-powershell_0.1.0-1_all.deb
 ```
 
-Until then, that command fails with `Unable to locate package`.
+A new `pwsh` finds the cmdlets without `Import-Module`. `sudo apt purge
+samba-powershell` removes everything it installed.
 
-### From source
+### Without the archive
 
-This works today and runs the backend of the four read cmdlets from a checkout.
+`install.sh` installs the same module and backend under `/usr/local`, for a
+system that cannot reach a package archive, and removes them again:
 
 ```bash
-git clone https://github.com/HardenSamba/samba-powershell.git
-cd samba-powershell
+sudo sh install.sh
+sudo sh install.sh --uninstall
+```
 
-# Run it straight from the checkout, no installation
+### Straight from a checkout
+
+The backend also runs from a checkout with no installation at all:
+
+```bash
 PYTHONPATH=src python3 -m samba_powershell.cli status
 ```
-
-The packaging skeleton is not yet a supported installation path. Its final
-module location, conffiles and clean purge behaviour belong to ticket #5, so
-do not infer installability from the presence of `debian/`.
-
-The ecosystem contract also expects an `install.sh` at the repository root, for
-manual installation on a Debian or Ubuntu system without the archive. This
-repository does not carry one yet.
 
 ## Usage
 
@@ -353,14 +356,17 @@ PYTHONPATH=/tmp/mk/src python3 -m modulekit.norms tests --require-headers \
 CI runs on `debian:stable`, never on a HardenSamba image. A test that only
 passes with extra software installed is a defect in the test.
 
-`.github/workflows/ci.yml` holds two jobs on `debian:stable`. `test` installs
+`.github/workflows/ci.yml` holds three jobs on `debian:stable`. `test` installs
 `python3`, `python3-pytest` and `mypy`, then runs `mypy --strict src`,
 `PYTHONPATH=src python3 -m pytest tests -q` and `benchmarks/transport.py`.
 `powershell` installs PowerShell from Microsoft's repository, validates the
 module manifest, and runs `tests/test_powershell.ps1`,
-`tests/test_composition.ps1` and `benchmarks/transport.ps1`. Every step fails
-its job when it fails, so a red run means a real failure. What neither job does
-is check the contract:
+`tests/test_composition.ps1` and `benchmarks/transport.ps1`. `package` builds
+the `.deb`, runs `lintian --fail-on error`, then installs, exercises and purges
+the package and the `install.sh` installation in turn, as
+[`docs/packaging.md`](docs/packaging.md) describes. Every step fails its job
+when it fails, so a red run means a real failure. What no job does is check
+the contract:
 
 - `modulekit validate .` and `modulekit lint` are not run in CI. The contract
   job that ran the validator has been removed rather than repaired: it cloned
@@ -392,7 +398,8 @@ nothing else.
 | `benchmarks/` | Required process and Unix-socket transport prototypes |
 | `docs/` | English architecture and behaviour documentation |
 | `debian/` | Packaging. The reference installation method |
-| `.github/workflows/` | CI on plain Debian: `mypy --strict`, pytest and the PowerShell tests |
+| `install.sh` | Manual installation under `/usr/local`, and its removal |
+| `.github/workflows/` | CI on plain Debian: `mypy --strict`, pytest, the PowerShell tests and the package |
 | `.claude/` | Agents and a skill for assisted development |
 
 ### Claude agents
@@ -469,8 +476,7 @@ breaks it. `CLAUDE.md` carries the same marker for the same reason.
 ## Licence
 
 Proprietary. The terms are the HardenSamba Proprietary Software License,
-version 1.0, in [`LICENSE`](LICENSE). The Debian packaging's `debian/copyright`
-still names no licence; aligning it belongs to the packaging work of ticket #5.
+version 1.0, in [`LICENSE`](LICENSE), which `debian/copyright` carries in full.
 
 This is a greenfield module, not a fork. There is no upstream project, no
 inherited licence and no divergence to describe. The closest reference points
