@@ -60,12 +60,11 @@ jobs:
     container: debian:stable
     steps:
       - uses: actions/checkout@v4
-      - name: Install the build tooling
+      - name: Install the build dependencies debian/control declares
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends build-essential debhelper dh-python \
-            pybuild-plugin-pyproject python3-all python3-setuptools python3-pytest \
-            python3-yaml lintian equivs ca-certificates curl
+          apt-get install -y --no-install-recommends lintian equivs
+          apt-get build-dep -y --no-install-recommends ./
       - name: Build the package
         run: |
           dpkg-buildpackage -us -uc -b
@@ -75,19 +74,42 @@ jobs:
           dpkg-deb --info dist/samba-powershell_*.deb
           dpkg-deb --contents dist/samba-powershell_*.deb
       - name: Lintian
-        run: lintian --fail-on error --display-info dist/samba-powershell_*.deb
-      - name: Install PowerShell and a samba-adws stand-in
+        run: |
+          lintian --fail-on error,warning --display-info \
+            --suppress-tags initial-upload-closes-no-bugs dist/samba-powershell_*.deb
+      - name: Build the samba-adws stand-in
+        run: cd dist && equivs-build ../tests/package/samba-adws.equivs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: dist/*.deb
+
+  package-install:
+    needs: package
+    runs-on: ubuntu-latest
+    container: debian:stable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
+      - name: Install PowerShell the way docs/packaging.md documents it
         shell: bash
         run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl
           . /etc/os-release
           curl -fsSLo /tmp/packages-microsoft-prod.deb \
             "https://packages.microsoft.com/config/debian/${VERSION_ID}/packages-microsoft-prod.deb"
           dpkg -i /tmp/packages-microsoft-prod.deb
           apt-get update
           apt-get install -y --no-install-recommends powershell
-          cd /tmp && equivs-build "$GITHUB_WORKSPACE/tests/package/samba-adws.equivs"
-          apt-get install -y /tmp/samba-adws_1.0.1_all.deb
-      - name: Install, exercise and purge the package
-        run: sh tests/test_package.sh deb dist/samba-powershell_*.deb
+      - name: Install the samba-adws stand-in and the test's own tool
+        run: apt-get install -y --no-install-recommends ./dist/samba-adws_1.0.1_all.deb python3-yaml
+      - name: Install, exercise, remove and purge the package
+        run: sh tests/test_package.sh deb dist/samba-powershell_*_all.deb
+      - name: Install the package over a manual installation
+        run: sh tests/test_package.sh coexist dist/samba-powershell_*_all.deb
       - name: Install, exercise and remove the manual installation
         run: sh tests/test_package.sh manual

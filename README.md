@@ -246,7 +246,9 @@ considered safe or complete until #8 has a live allow/deny proof.
 
 Configuration lives in `/etc/hardensamba/samba-powershell/`, which is the
 `writes.config_dir` declared in `MODULE.yaml`. Per the ecosystem contract, the
-module owns that directory and must not write outside it.
+module owns that directory and writes no configuration outside it (contract
+3.3); every other path it writes, the module and the backend, is declared under
+`writes.paths` (contract 2.3).
 
 **Nothing reads a configuration file today.** The directory is declared, not
 populated. The format is not settled either, so the example below is a proposal
@@ -384,7 +386,8 @@ No check gates a merge in any case. The organisation is on a free plan, where
 private repositories cannot have branch protection or required status checks at
 all, so a green tick has never been a condition of merging here. It means the
 type checker, the Python tests and the two PowerShell test scripts passed, and
-nothing else.
+that the package built, passed lintian, and installed, worked and purged clean
+in a fresh container, as did `install.sh`; nothing else.
 
 ### Layout
 

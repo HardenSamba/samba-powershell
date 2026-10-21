@@ -1,7 +1,8 @@
 #!/bin/sh
 #
-# Manual installation of samba-powershell on a Debian or Ubuntu system that
-# cannot reach the package archive, and its removal with --uninstall.
+# Manual installation of samba-powershell on Debian 12 or later, or Ubuntu
+# 24.04 or later, for a system that cannot reach the package archive, and its
+# removal with --uninstall.
 #
 # The Debian package is the reference method. This installs the same two
 # halves, the Python backend and the SambaAD PowerShell module, under
@@ -19,6 +20,7 @@
 # Usage: sh install.sh [--uninstall]
 
 set -eu
+umask 022
 
 NAME=samba-powershell
 SOURCE=$(cd "$(dirname "$0")" && pwd)
@@ -26,7 +28,11 @@ LIB=/usr/local/lib/samba-powershell
 LAUNCHER=/usr/local/bin/samba-ad-backend
 MODULES=/usr/local/share/powershell/Modules
 MODULE=$MODULES/SambaAD
+PACKAGE_MODULE=/usr/share/samba-powershell/Modules/SambaAD
 MODULE_FILES="SambaAD.psd1 SambaAD.psm1 SambaAD.Format.ps1xml"
+# The interpreter the Debian packages of samba-adws and samba install for;
+# another python3 earlier on PATH would not find their modules.
+PYTHON=/usr/bin/python3
 
 fail() {
     echo "$NAME: $*" >&2
@@ -42,14 +48,24 @@ package_installed() {
     [ "$status" = installed ]
 }
 
+refuse_link() {
+    if [ "$(readlink "$MODULE")" = "$PACKAGE_MODULE" ]; then
+        fail "$MODULE is the package's link; $1"
+    fi
+    fail "$MODULE is a link of your own; remove it first"
+}
+
 uninstall() {
     if [ -L "$MODULE" ]; then
-        fail "$MODULE is the package's link; remove the package with apt instead"
+        refuse_link "remove the package with apt instead"
     fi
     rm -rf "$LIB" "$MODULE"
     rm -f "$LAUNCHER"
     rmdir --ignore-fail-on-non-empty "$MODULES" /usr/local/share/powershell 2>/dev/null || true
     echo "$NAME: removed the manual installation"
+    if package_installed; then
+        echo "$NAME: run 'dpkg-reconfigure $NAME' to link the packaged module"
+    fi
 }
 
 install_backend() {
@@ -115,11 +131,13 @@ if package_installed; then
     fail "the $NAME package is installed; remove it with apt before a manual installation"
 fi
 if [ -L "$MODULE" ]; then
-    fail "$MODULE is a link left by the package; purge the package first"
+    refuse_link "purge the package first"
 fi
-PYTHON=$(command -v python3) || fail "python3 is required"
+[ -x "$PYTHON" ] || fail "python3 is required ($PYTHON, package python3)"
 "$PYTHON" -c 'import sys; sys.exit(sys.version_info < (3, 11))' \
     || fail "Python 3.11 or later is required"
+[ -d "$SOURCE/src/samba_powershell" ] && [ -f "$SOURCE/powershell/SambaAD/SambaAD.psd1" ] \
+    || fail "run install.sh from a samba-powershell checkout"
 
 install_backend
 install_module

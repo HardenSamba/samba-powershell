@@ -1,7 +1,8 @@
 #!/usr/bin/make -f
 
-# The importable Python package, so pybuild finds src/samba_powershell, and the
-# build system, which pybuild does not always detect from pyproject.toml alone.
+# The importable Python package's name, which here only names pybuild's build
+# directory, and the build system, which pybuild does not always detect from
+# pyproject.toml alone.
 export PYBUILD_NAME = samba_powershell
 export PYBUILD_SYSTEM = pyproject
 
