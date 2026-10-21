@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+
 import pytest
 
+from samba_powershell.dispatcher import dispatch
+from samba_powershell.errors import BackendError
 from tests.backend_calls import answered, refused, request_for
-from tests.fake_client import DOMAIN
+from tests.fake_client import DOMAIN, FakeClient
 
 ALICE_DN = "CN=Alice,CN=Users,DC=example,DC=com"
 PC01_DN = "CN=PC01,CN=Computers,DC=example,DC=com"
@@ -83,10 +87,27 @@ def test_the_wrong_class_reads_like_a_missing_object() -> None:
 # A control character is refused: the directory would compare only up to a NUL
 # and silently resolve the prefix.
 @pytest.mark.parametrize("identity", ["alice\x00xyz", "CN=Alice\x01,DC=example,DC=com",
-                                      "S-1-5-21-1-2-3-1105\x00"])
+                                      "S-1-5-21-1-2-3-1105\x00", "alice\x1f", "alice\x0c",
+                                      "alice\x85"])
 def test_a_control_character_is_refused(identity: str) -> None:
     error = refused(request_for("get_ad_user", identity))
     assert (error.error_id, error.category) == ("SambaAD.InvalidIdentity", "InvalidArgument")
+
+
+# A search answer without a distinguished name is a protocol failure, not an
+# ambiguity: it names what is wrong rather than claiming two matches.
+def test_a_match_without_a_dn_is_a_protocol_error() -> None:
+
+    # Answers the account search with one object that carries no name.
+    class NamelessMatch(FakeClient):
+        # Returns one match whose distinguishedName is missing.
+        def search(self, base: str, scope: str, ldap_filter: str,
+                   properties: Sequence[str], limit: int) -> list[Mapping[str, object]]:
+            return [{"objectClass": ("top", "user")}]
+
+    with pytest.raises(BackendError) as raised:
+        dispatch(request_for("get_ad_user", "alice"), NamelessMatch)
+    assert (raised.value.error_id, raised.value.target) == ("SambaAD.ProtocolError", "alice")
 
 
 # A missing distinguished name is reported against the caller's identity, with

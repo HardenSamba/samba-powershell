@@ -113,8 +113,8 @@ non-zero:
   "version": 1,
   "ok": false,
   "error": {
-    "message": "The directory object was not found.",
-    "error_id": "SambaAD.IdentityNotFound",
+    "message": "Cannot find an object with identity 'alice'.",
+    "error_id": "SambaAD.ObjectNotFound",
     "category": "ObjectNotFound",
     "target": "alice"
   }
@@ -145,11 +145,13 @@ reported the same way as any other failure: a non-terminating `ErrorRecord`,
 `SambaAD.BackendUnavailable` or `SambaAD.ProtocolError`. The bridge returns that
 record rather than throwing it, because an exception caught on the way would
 still be appended to the caller's `-ErrorVariable` beside the record. For the
-same reason it checks what it can before acting — that the backend exists and
-has an execute bit, that the envelope parses, as a hashtable, into every field
-the cmdlets read — instead of catching the failure afterwards. What it cannot
-check beforehand, a script whose interpreter is gone, still leaves PowerShell's
-own record of the failed start.
+same reason it checks what it can before acting — that the calling user can
+execute the backend, asked through `test -x`; that the envelope parses, as a
+hashtable, into every field the cmdlets read, with names an object can hold —
+and writes the request through a task rather than a call that throws, so a
+backend that exits before reading it is judged by its answer and its standard
+error. What it cannot check beforehand, a script whose interpreter is gone,
+still leaves PowerShell's own record of the failed start.
 
 ## Transport measurements
 

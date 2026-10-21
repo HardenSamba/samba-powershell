@@ -26,9 +26,8 @@ def get_object(request: dict[str, object], client_factory: ClientFactory,
                spec: ClassSpec) -> dict[str, object]:
     parameters.validate_parameters(request)
     identity = parameters.required_string(request, "identity")
-    server, port = parameters.requested_endpoint(request)
+    server, port, endpoint = parameters.requested_endpoint(request)
     extras = properties.requested_extras(request)
-    endpoint = server if port == parameters.ADWS_PORT else f"{server}:{port}"
     try:
         return read(client_factory(server, port, ADWS_TIMEOUT), identity, spec, extras)
     except BackendError:

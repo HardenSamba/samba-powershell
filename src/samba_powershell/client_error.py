@@ -7,7 +7,7 @@ import re
 from samba_powershell.errors import BackendError
 from samba_powershell.guards import not_found
 
-CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
 
 # What usually lies behind a transport failure, keyed by a phrase of the
 # underlying message, worded as what the operator can do about it.

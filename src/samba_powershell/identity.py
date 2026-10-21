@@ -14,14 +14,14 @@ ATTRIBUTE_TYPE = r"(?:[A-Za-z][A-Za-z0-9-]*|[0-9]+(?:\.[0-9]+)*)"
 DISTINGUISHED_NAME = re.compile(rf"{ATTRIBUTE_TYPE}\s*=")
 EXTENDED_REFERENCE = re.compile(r"<(?:GUID|SID)=[^<>]+>(?:;.*)?", re.IGNORECASE)
 
-# A lenient shape check, not the RFC 4514 grammar: attribute=value pairs joined
-# by ',' or '+', each value quoted or backslash-escaped as ldb accepts it, and
-# never empty, since Active Directory refuses an empty RDN value.
+# A shape check, not the RFC 4514 grammar, kept to what ldb parses: a named type,
+# '=' right after it, a non-empty value, quoted or with specials escaped, and ','
+# between components. ldb refuses '+' RDNs, OID types and a space before '='.
 QUOTED_VALUE = r'"(?:[^"\\]|\\.)+"\s*'
-PLAIN_VALUE = r'(?:[^,+\\\s"]|\\.)(?:[^,+\\]|\\.)*'
-RDN = rf"\s*{ATTRIBUTE_TYPE}\s*=\s*(?:{QUOTED_VALUE}|{PLAIN_VALUE})"
-VALID_DN = re.compile(rf"{RDN}(?:[,+]{RDN})*")
-CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
+PLAIN_VALUE = r'(?:[^,+\\\s"<>;=]|\\.)(?:[^,+\\"<>;=]|\\.)*'
+RDN = rf"\s*[A-Za-z][A-Za-z0-9-]*=\s*(?:{QUOTED_VALUE}|{PLAIN_VALUE})"
+VALID_DN = re.compile(rf"{RDN}(?:,{RDN})*")
+CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
 # Names the attribute an -Identity value should be matched against. The

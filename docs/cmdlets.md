@@ -78,12 +78,18 @@ The extended forms are LDAP's own: the directory resolves `<SID=...>` and
 distinguished name that does not parse — an empty component, an empty value, a
 trailing lone backslash — is refused with `SambaAD.InvalidIdentity` before
 anything travels, rather than answered with a not-found from a server that never
-parsed it. The check is a lenient shape check, not the RFC 4514 grammar: it
-accepts what ldb accepts, escaped characters, hex pairs, quoted values such as
-`CN="Doe, Jane"`, multi-valued RDNs and spaces around `=`. An identity holding a
-control character is refused the same way: the directory compares a value only
-up to a NUL, so `Administrator` followed by a NUL and anything would otherwise
-resolve to `Administrator`.
+parsed it. The check is a shape check, not the RFC 4514 grammar, kept to what
+ldb parses: escaped characters, hex pairs, quoted values such as
+`CN="Doe, Jane"`, and spaces after `=` or around `,`. The forms ldb itself
+refuses — a space before `=`, `+` multi-valued RDNs, numeric attribute types,
+`;` separators, unescaped `<`, `>`, `;`, `=` or `"` in a value — are refused here
+too. A DN ending in a lone backslash or an escaped trailing space, which ldb
+tolerates, is refused, since the space is dropped with the rest of the paste.
+
+Only spaces, tabs and line breaks around an identity are dropped. An identity
+holding any other control character, C0 or C1, anywhere, is refused the same
+way: the directory compares a value only up to a NUL, so `Administrator`
+followed by a NUL and anything would otherwise resolve to `Administrator`.
 
 An account name is resolved the way Windows resolves it: a subtree search of
 the domain's default naming context for that `sAMAccountName`, scoped to the
@@ -269,6 +275,9 @@ alias has no principal to authenticate against. `host:port` reaches ADWS on
 another port than 9389. A value of only whitespace is no server, and fails like
 an absent one with `SambaAD.ServerRequired`.
 
+A `-Server` holding a control character is refused with
+`SambaAD.InvalidParameter` before anything travels.
+
 A failure to reach or authenticate to the endpoint is reported against the
 server as the caller gave it, port included, under the client's code
 `SambaAD.TransportError`, with a category saying what failed and the usual cause
@@ -282,11 +291,13 @@ named:
 | `ConnectionError` | nothing listens on the port | check the port, or whether samba-adws runs |
 | `OperationTimeout` | no answer within 30 seconds | |
 
-A backend that is missing or has no execute bit reports
-`SambaAD.BackendUnavailable`, and one that answers outside the protocol — no
-JSON, another version, an exit code that disagrees with the answer, a result or
-error missing a field the cmdlets read, property names that differ only in case
-— reports `SambaAD.ProtocolError`. Both are non-terminating like every other
+A backend that is missing, a dangling link, or one the calling user cannot
+execute reports `SambaAD.BackendUnavailable`, and one that answers outside the
+protocol — no JSON, another version, an exit code that disagrees with the
+answer, a result or error missing a field the cmdlets read, a property name that
+is empty or differs from another only in case — reports `SambaAD.ProtocolError`.
+A backend that exits before reading the request, as a Python backend failing at
+import does, is judged by that answer, and its traceback reaches `-Debug`. Both are non-terminating like every other
 failure, each the one record in `-ErrorVariable`, and the backend's standard
 error is written to the debug stream, shown with `-Debug`, rather than into the
 message. A backend the system finds executable yet cannot start, such as a

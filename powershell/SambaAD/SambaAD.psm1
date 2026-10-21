@@ -6,6 +6,10 @@ $script:BackendCommand = if ($env:SAMBA_POWERSHELL_BACKEND) {
     'samba-ad-backend'
 }
 
+# The backend path last found executable, so the test -x probe, a process of its
+# own, runs once per session rather than once per object.
+$script:RunnableBackend = $null
+
 # ConvertFrom-Json turns any text shaped like a date into a DateTime. Where it
 # can be told not to, PowerShell 7.5 onwards, only the properties the backend
 # lists as times are converted, so a text attribute stays text.
@@ -41,9 +45,9 @@ function New-SambaADFailure {
     )
 }
 
-# Whether the system can execute a file: on Linux at least one execute bit, so
-# a backend missing it is refused before Start() throws, which would leave an
-# exception in the caller's -ErrorVariable beside the record.
+# Whether the calling user may execute a file, asked the way execve judges it,
+# through test -x: a missing execute bit, one only others hold, or a dangling
+# link is refused before Start() can throw.
 function Test-SambaADExecutable {
     [CmdletBinding()]
     param(
@@ -51,20 +55,29 @@ function Test-SambaADExecutable {
         [string]$Path
     )
 
-    if ($IsWindows) {
+    if ($IsWindows -or -not [System.IO.File]::Exists('/usr/bin/test')) {
         return $true
     }
-    $execute = [System.IO.UnixFileMode]'UserExecute, GroupExecute, OtherExecute'
-    return ([System.IO.File]::GetUnixFileMode($Path) -band $execute) -ne 0
+    $probeInfo = [System.Diagnostics.ProcessStartInfo]::new('/usr/bin/test')
+    $probeInfo.ArgumentList.Add('-x')
+    $probeInfo.ArgumentList.Add($Path)
+    $probeInfo.UseShellExecute = $false
+    $probe = [System.Diagnostics.Process]::Start($probeInfo)
+    $probe.WaitForExit()
+    $allowed = $probe.ExitCode -eq 0
+    $probe.Dispose()
+    return $allowed
 }
 
 # Runs one isolated backend request and returns its JSON response envelope,
 # or, for a backend that cannot start or answers outside the protocol, the
 # typed ErrorRecord to report. Those paths return the record rather than throw
 # it, because a caught exception would still land in the caller's
-# -ErrorVariable; only a backend the system finds executable yet cannot start,
-# such as a script whose interpreter is missing, leaves the runtime's own record
-# there too. The backend's standard error goes to the debug stream.
+# -ErrorVariable. The request is written without an API that throws, so a
+# backend that exits before reading it is judged by its answer and its standard
+# error, which goes to the debug stream. Only a backend the system finds
+# executable yet cannot start, such as a script whose interpreter is missing,
+# leaves the runtime's own record beside the module's.
 function Invoke-SambaADBackend {
     [CmdletBinding()]
     param(
@@ -74,11 +87,13 @@ function Invoke-SambaADBackend {
 
     $command = Get-Command -Name $script:BackendCommand -CommandType Application `
         -ErrorAction Ignore | Select-Object -First 1
-    if (-not $command -or -not (Test-SambaADExecutable -Path $command.Source)) {
+    if (-not $command -or ($script:RunnableBackend -ne $command.Source -and
+            -not (Test-SambaADExecutable -Path $command.Source))) {
         return New-SambaADFailure -ErrorId 'SambaAD.BackendUnavailable' `
             -Category ResourceUnavailable `
             -Message "The backend '$script:BackendCommand' was not found or is not executable."
     }
+    $script:RunnableBackend = $command.Source
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $command.Source
     $startInfo.ArgumentList.Add('request')
@@ -92,13 +107,19 @@ function Invoke-SambaADBackend {
     $startInfo.StandardErrorEncoding = $utf8
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
+    $payload = $utf8.GetBytes(($Request | ConvertTo-Json -Compress -Depth 8) + "`n")
 
     try {
         $process.Start() | Out-Null
         $outputTask = $process.StandardOutput.ReadToEndAsync()
         $diagnosticTask = $process.StandardError.ReadToEndAsync()
-        $process.StandardInput.WriteLine(($Request | ConvertTo-Json -Compress -Depth 8))
-        $process.StandardInput.Close()
+        $stdin = $process.StandardInput.BaseStream
+        $writing = $stdin.WriteAsync($payload, 0, $payload.Length)
+        $null = [System.Threading.Tasks.Task]::WhenAny($writing).GetAwaiter().GetResult()
+        $null = $writing.Exception
+        $closing = $stdin.DisposeAsync().AsTask()
+        $null = [System.Threading.Tasks.Task]::WhenAny($closing).GetAwaiter().GetResult()
+        $null = $closing.Exception
         $process.WaitForExit()
         $output = $outputTask.GetAwaiter().GetResult()
         $diagnostic = $diagnosticTask.GetAwaiter().GetResult()
@@ -124,13 +145,14 @@ function Invoke-SambaADBackend {
             -Message ("The backend answered outside the protocol ($problem); run the " +
                 'cmdlet with -Debug to see its standard error.')
     }
-    return $output | ConvertFrom-Json -Depth 8 @script:JsonDateOptions
+    return $output | ConvertFrom-Json -NoEnumerate @script:JsonDateOptions
 }
 
 # Names what is wrong with a backend answer, or returns nothing when it is a
-# version 1 envelope whose ok flag agrees with the exit code and whose result or
-# error carries every field the cmdlets read. It parses into a hashtable, which,
-# unlike an object, accepts property names that differ only in case.
+# version 1 envelope whose ok flag agrees with the exit code, whose names an
+# object can hold, and whose result or error carries every field the cmdlets
+# read. It parses into a hashtable, which, unlike an object, accepts property
+# names that differ only in case, and parses exactly as the final read does.
 function Test-SambaADEnvelope {
     [CmdletBinding()]
     param(
@@ -148,13 +170,19 @@ function Test-SambaADEnvelope {
     if (-not (Test-Json -Json $Output -ErrorAction Ignore)) {
         return 'invalid JSON'
     }
-    $response = $Output | ConvertFrom-Json -AsHashtable -Depth 8
+    $response = $Output | ConvertFrom-Json -AsHashtable -NoEnumerate @script:JsonDateOptions
+    $version = if ($response -is [System.Collections.IDictionary]) { $response['version'] }
     if (
         $response -isnot [System.Collections.IDictionary] -or
-        $response['version'] -ne 1 -or
+        ($version -isnot [long] -and $version -isnot [int]) -or
+        $version -ne 1 -or
         $response['ok'] -isnot [bool]
     ) {
         return 'invalid envelope'
+    }
+    $names = Test-SambaADKeys -Value $response
+    if ($names) {
+        return $names
     }
     $expectedExitCode = if ($response['ok']) { 0 } else { 1 }
     if ($ExitCode -ne $expectedExitCode) {
@@ -167,14 +195,53 @@ function Test-SambaADEnvelope {
     if (
         $failure -isnot [System.Collections.IDictionary] -or
         $failure['message'] -isnot [string] -or
-        $failure['error_id'] -isnot [string]
+        $failure['error_id'] -isnot [string] -or
+        [string]::IsNullOrWhiteSpace($failure['error_id'])
     ) {
         return 'invalid error'
     }
 }
 
+# Names a property name no PowerShell object can hold anywhere in an answer,
+# empty or equal to another but for case, or returns nothing. Only nested
+# dictionaries and lists are walked; a scalar cannot hold a name.
+function Test-SambaADKeys {
+    [CmdletBinding()]
+    param(
+        [Parameter()]
+        [AllowNull()]
+        [object]$Value
+    )
+
+    $children = @()
+    if ($Value -is [System.Collections.IDictionary]) {
+        $seen = [System.Collections.Generic.HashSet[string]]::new(
+            [System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($key in $Value.Keys) {
+            if ([string]::IsNullOrEmpty([string]$key)) {
+                return 'an empty property name'
+            }
+            if (-not $seen.Add([string]$key)) {
+                return 'property names that differ only in case'
+            }
+        }
+        $children = @($Value.Values)
+    } elseif ($Value -is [System.Collections.IList]) {
+        $children = @($Value)
+    }
+    foreach ($child in $children) {
+        if ($child -is [System.Collections.IDictionary] -or $child -is [System.Collections.IList]) {
+            $inner = Test-SambaADKeys -Value $child
+            if ($inner) {
+                return $inner
+            }
+        }
+    }
+}
+
 # Names what is wrong with a success envelope's result, or returns nothing: it
-# needs a type and properties, and property names that differ by more than case.
+# needs a type, properties with a DistinguishedName, and a datetimes list, if
+# any, of property names.
 function Test-SambaADResult {
     [CmdletBinding()]
     param(
@@ -186,18 +253,24 @@ function Test-SambaADResult {
     if (
         $Result -isnot [System.Collections.IDictionary] -or
         $Result['type'] -isnot [string] -or
-        $Result['properties'] -isnot [System.Collections.IDictionary]
+        [string]::IsNullOrWhiteSpace($Result['type']) -or
+        $Result['properties'] -isnot [System.Collections.IDictionary] -or
+        $Result['properties']['DistinguishedName'] -isnot [string]
     ) {
         return 'invalid result'
     }
-    $names = @($Result['properties'].Keys | ForEach-Object { ([string]$_).ToLowerInvariant() })
-    if (@($names | Select-Object -Unique).Count -ne $names.Count) {
-        return 'property names that differ only in case'
+    if ($Result.Contains('datetimes')) {
+        $times = $Result['datetimes']
+        $bad = @($times | Where-Object { $_ -isnot [string] -or $_ -eq '' })
+        if ($times -isnot [System.Collections.IList] -or $bad.Count) {
+            return 'invalid datetimes'
+        }
     }
 }
 
 # Converts a backend error envelope into a native PowerShell ErrorRecord. The
-# category and target are optional, and an unknown category is NotSpecified.
+# category and target are optional, and a category that is not one defined
+# name, a number or a combination included, is NotSpecified.
 function New-SambaADErrorRecord {
     [CmdletBinding()]
     param(
@@ -207,10 +280,13 @@ function New-SambaADErrorRecord {
 
     $fields = $ErrorEnvelope.PSObject.Properties
     $category = [System.Management.Automation.ErrorCategory]::NotSpecified
+    $name = if ($fields['category']) { $fields['category'].Value } else { $null }
     $parsed = $null
-    if ($fields['category'] -and [System.Enum]::TryParse(
-            [System.Management.Automation.ErrorCategory],
-            [string]$fields['category'].Value, $true, [ref]$parsed)) {
+    if (
+        $name -is [string] -and $name -match '^[A-Za-z]+$' -and
+        [System.Enum]::TryParse([System.Management.Automation.ErrorCategory], $name, $true,
+            [ref]$parsed)
+    ) {
         $category = $parsed
     }
     $target = if ($fields['target']) { $fields['target'].Value } else { $null }
@@ -303,7 +379,8 @@ function Invoke-SambaADRead {
     }
     $result.PSObject.TypeNames.Insert(0, [string]$response.result.type)
     $result | Add-Member -MemberType ScriptMethod -Name ToString -Force -Value {
-        [string]$this.DistinguishedName
+        $dn = $this.PSObject.Properties['DistinguishedName']
+        if ($dn) { [string]$dn.Value } else { '' }
     }
     Write-Output $result
 }

@@ -36,7 +36,8 @@ def requested_extras(parameters: dict[str, object]) -> list[str]:
 def checked_name(name: str) -> str:
     if name == WILDCARD or DISPLAY_NAME.fullmatch(name):
         return name
-    reason = ("carries an attribute option; options such as ;range= are not supported"
+    reason = ("is empty" if not name else
+              "carries an attribute option; options such as ;range= are not supported"
               if ";" in name else
               "is not an attribute name; give one LDAP display name per entry, as in "
               "-Properties mail,memberOf")

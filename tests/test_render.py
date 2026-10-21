@@ -156,7 +156,7 @@ def test_several_unknown_properties_are_all_named() -> None:
 # reason: an attribute option, or several names in one string.
 @pytest.mark.parametrize(("name", "reason"), [("member;range=0-1", "option"),
                                               ("description,systemFlags", "one LDAP"),
-                                              ("", "not an attribute")])
+                                              ("", "is empty"), ("  ", "is empty")])
 def test_a_malformed_property_name_is_refused(name: str, reason: str) -> None:
     error = refused(request_for("get_ad_user", ALICE_DN, [name]))
     assert error.error_id == "SambaAD.InvalidProperty"

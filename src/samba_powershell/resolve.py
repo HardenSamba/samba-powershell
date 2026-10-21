@@ -61,24 +61,23 @@ def checked_dn(identity: str) -> str:
 # the way Windows resolves -Identity: a sAMAccountName search of the domain.
 def account_reference(identity: str, spec: ClassSpec, directory: DirectoryClient) -> str:
     if not spec.account_names:
-        raise BackendError(
-            f"'{identity}' is neither a distinguished name, a GUID nor a SID, which is what "
-            "Get-ADObject takes; use Get-ADUser, Get-ADComputer or Get-ADGroup for an "
-            "account name.",
-            "SambaAD.IdentityNotResolvable",
-            "InvalidArgument",
-            identity,
-        )
+        raise BackendError(f"'{identity}' is neither a distinguished name, a GUID nor a SID, "
+                           "which is what Get-ADObject takes; use Get-ADUser, Get-ADComputer "
+                           "or Get-ADGroup for an account name.",
+                           "SambaAD.IdentityNotResolvable", "InvalidArgument", identity)
     base = directory.naming_context("defaultNamingContext")
     found = directory.search(base, "Subtree", account_filter(identity, spec),
                              ("distinguishedName",), 2)
     if not found:
         raise not_found(identity)
-    if len(found) == 1 and isinstance(dn := find(found[0], "distinguishedName"), str):
+    if len(found) > 1:
+        raise BackendError(f"The account name '{identity}' matches more than one object of "
+                           f"class '{spec.object_class}' under '{base}'.",
+                           "SambaAD.IdentityNotUnique", "InvalidResult", identity)
+    if isinstance(dn := find(found[0], "distinguishedName"), str):
         return dn
-    raise BackendError(f"The account name '{identity}' matches more than one object of "
-                       f"class '{spec.object_class}' under '{base}'.",
-                       "SambaAD.IdentityNotUnique", "InvalidResult", identity)
+    raise BackendError(f"The directory answered the search for '{identity}' without a "
+                       "distinguished name.", "SambaAD.ProtocolError", "ProtocolError", identity)
 
 
 # The filter an account name implies for this cmdlet's class. A computer's

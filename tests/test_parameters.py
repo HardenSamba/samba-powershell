@@ -22,15 +22,28 @@ def test_a_blank_server_is_required(server: str) -> None:
 
 
 # host:port names another port, as the Windows module accepts; a bare host
-# takes the ADWS port, and surrounding whitespace is dropped.
+# takes the ADWS port, surrounding whitespace is dropped, and the value as given
+# comes back beside the host and port, for a failure to report.
 @pytest.mark.parametrize(("server", "endpoint"), [
-    ("dc1.example.com", ("dc1.example.com", ADWS_PORT)),
-    (" dc1.example.com ", ("dc1.example.com", ADWS_PORT)),
-    ("dc1.example.com:19389", ("dc1.example.com", 19389)),
-    ("dc1.example.com:notaport", ("dc1.example.com:notaport", ADWS_PORT)),
+    ("dc1.example.com", ("dc1.example.com", ADWS_PORT, "dc1.example.com")),
+    (" dc1.example.com ", ("dc1.example.com", ADWS_PORT, "dc1.example.com")),
+    ("dc1.example.com:19389", ("dc1.example.com", 19389, "dc1.example.com:19389")),
+    ("dc1.example.com:9389", ("dc1.example.com", 9389, "dc1.example.com:9389")),
+    ("dc1.example.com:notaport", ("dc1.example.com:notaport", ADWS_PORT,
+                                  "dc1.example.com:notaport")),
 ])
-def test_the_endpoint_is_read_from_server(server: str, endpoint: tuple[str, int]) -> None:
+def test_the_endpoint_is_read_from_server(server: str,
+                                          endpoint: tuple[str, int, str]) -> None:
     assert requested_endpoint({"server": server}) == endpoint
+
+
+# A server holding a control character is refused against itself, before it
+# reaches a request it would corrupt.
+@pytest.mark.parametrize("server", ["dc1\x00.example.com", "dc1.example.com\x1b", "dc\n1"])
+def test_a_control_character_in_the_server_is_refused(server: str) -> None:
+    with pytest.raises(BackendError) as raised:
+        requested_endpoint({"server": server})
+    assert (raised.value.error_id, raised.value.target) == ("SambaAD.InvalidParameter", server)
 
 
 # A transport failure names the endpoint as the caller gave it, port included,

@@ -53,21 +53,23 @@ def test_account_name_metacharacters_are_escaped() -> None:
     assert identity_filter("a)(b*") == "(sAMAccountName=a\\29\\28b\\2a)"
 
 
-# The distinguished names ldb accepts pass the shape check: escapes, hex pairs,
-# quoted values with commas inside, multi-valued RDNs and spaces around '='.
+# The distinguished names ldb parses pass the shape check: escapes, hex pairs,
+# quoted values with commas inside, and spaces after '=' or around ','.
 @pytest.mark.parametrize("identity", [
     "CN=Doe\\, Jane,CN=Users,DC=example,DC=com",
     "CN=Doe\\2C Jane,CN=Users,DC=example,DC=com",
     'CN="Doe, Jane",CN=Users,DC=example,DC=com',
-    "CN=Jane+UID=jdoe,DC=example,DC=com",
-    "CN = Jane , DC = example",
-    "2.5.4.3=Jane,DC=example,DC=com",
+    "CN= Jane , DC=example",
+    "cn=jane,dc=example,dc=com",
 ])
 def test_well_formed_dns_are_accepted(identity: str) -> None:
     assert is_valid_dn(identity)
 
 
-# Empty components, empty values and a dangling escape are refused.
-@pytest.mark.parametrize("identity", ["CN=", "CN=a,,DC=b", "CN=a\\", 'CN="",DC=b', "CN=a,"])
+# Empty components and values, a dangling escape, and the forms ldb itself
+# refuses, '+' RDNs, OID types and a space before '=', are refused.
+@pytest.mark.parametrize("identity", ["CN=", "CN=a,,DC=b", "CN=a\\", 'CN="",DC=b', "CN=a,",
+                                      "CN=Jane+UID=jdoe,DC=example", "2.5.4.3=Jane,DC=x",
+                                      "CN =Jane,DC=x", "CN=Jane;DC=x"])
 def test_malformed_dns_are_refused(identity: str) -> None:
     assert not is_valid_dn(identity)
