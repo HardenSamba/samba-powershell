@@ -364,9 +364,9 @@ passes with extra software installed is a defect in the test.
 `powershell` installs PowerShell from Microsoft's repository, validates the
 module manifest, and runs `tests/test_powershell.ps1`,
 `tests/test_composition.ps1` and `benchmarks/transport.ps1`. `package` builds
-the `.deb`, runs `lintian --fail-on error`, then installs, exercises and purges
-the package and the `install.sh` installation in turn, as
-[`docs/packaging.md`](docs/packaging.md) describes. Every step fails its job
+the `.deb` and runs lintian in one `debian:stable` container, then installs,
+exercises and removes the package and the `install.sh` installation in a fresh
+one, as [`docs/packaging.md`](docs/packaging.md) describes. Every step fails its job
 when it fails, so a red run means a real failure. What no job does is check
 the contract:
 

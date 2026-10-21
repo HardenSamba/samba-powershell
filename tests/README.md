@@ -5,7 +5,8 @@ Tests must run on a plain Debian system, without the HardenSamba image.
 PowerShell, samba-adws (or the stand-in in `package/samba-adws.equivs`) and
 `python3-yaml` installed; its header lists the modes, and
 `docs/packaging.md` says what each checks. It writes to the system, so run it
-only where that is the point, as CI's `package-install` job does.
+only where that is the point, as CI does in a fresh container through
+`package/ci_install.sh`, after `package/ci_build.sh` built the package.
 
 `test_live_adws.ps1` is the acceptance boundary for a provisioned Samba AD
 domain and the supported `samba-adws` client, 1.0.0 or later. Obtain a Kerberos

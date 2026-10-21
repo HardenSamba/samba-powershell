@@ -178,10 +178,12 @@ module, which `install.sh --uninstall` reminds you of.
 
 ## What CI checks
 
-Two jobs of `.github/workflows/ci.yml` run in `debian:stable` on every push to
-`main` and every pull request, and fail when any step fails.
+The `package` job of `.github/workflows/ci.yml` runs on every push to `main` and
+every pull request, and fails when any step fails. It runs two `debian:stable`
+containers in turn over the checkout, so the install test starts from a system
+that never saw a build tool, without passing files between jobs.
 
-`package` builds and lints:
+`tests/package/ci_build.sh`, in the first container, builds and lints:
 
 1. The build dependencies are installed from `debian/control` itself, with
    `apt-get build-dep`, so one missing there fails the build.
@@ -191,8 +193,8 @@ Two jobs of `.github/workflows/ci.yml` run in `debian:stable` on every push to
    below is suppressed by name, so any other fails the job until it is fixed or
    justified here.
 
-`package-install` starts from a fresh `debian:stable` container with only the
-built package:
+`tests/package/ci_install.sh`, in a fresh container that holds only the built
+packages and the checkout:
 
 1. PowerShell is installed by the documented steps above, and nothing else.
 2. The samba-adws repository is private and the workflow's token cannot reach
