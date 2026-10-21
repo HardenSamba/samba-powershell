@@ -22,5 +22,8 @@ provides:
   commands:
   - samba-ad-backend
   - Get-ADUser
+  - Get-ADComputer
+  - Get-ADGroup
+  - Get-ADObject
 writes:
   config_dir: /etc/hardensamba/samba-powershell/
