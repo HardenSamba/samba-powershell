@@ -13,28 +13,28 @@ speaking to a Samba domain controller.
 
 ## Status
 
-**Architecture proof in progress.** The process boundary and one `Get-ADUser`
-surface now exist, but the live proof still depends on the client API tracked
-in `samba-adws#7`. Do not treat this branch as a packaged release.
+**Read cmdlets working against a live domain; not a packaged release.**
+`Get-ADUser`, `Get-ADComputer`, `Get-ADGroup` and `Get-ADObject` read a Samba
+domain through the `samba-adws` client. They have been checked on a Samba 4.17
+controller running samba-adws 1.0.1, value by value against `ldbsearch`. The
+write cmdlets and an installable package are not done.
 
 What is actually in this repository today:
 
 | Present | Absent |
 |---|---|
-| A typed Python backend and JSON envelope | A completed live-domain proof |
-| A `SambaAD` PowerShell module | The full read and write cmdlet surface |
-| Offline Python and PowerShell boundary tests | Identity forms beyond a distinguished name |
-| A Debian packaging skeleton under `debian/` | A built or published package |
-| A CI workflow on plain Debian, running `mypy --strict` and pytest | An `install.sh`, and any contract or coding standard check in CI |
-| `MODULE.yaml`, declaring the intended surface | A configuration file, or code that reads one |
+| A typed Python backend and JSON envelope | The write cmdlet surface |
+| A `SambaAD` PowerShell module with four read cmdlets | `-Filter`, `-LDAPFilter`, `-SearchBase` and paging |
+| Identity by distinguished name, GUID, SID or account name | A built or published package |
+| Offline Python and PowerShell tests, and a live acceptance harness | An `install.sh`, and any contract or coding standard check in CI |
+| A Debian packaging skeleton under `debian/` | A configuration file, or code that reads one |
+| A CI workflow on plain Debian: `mypy --strict`, pytest and the PowerShell tests | |
+| `MODULE.yaml`, declaring the intended surface | |
 
-The first working version is not the full cmdlet set. It is the architecture
-decision plus a single proof. The module is split between a PowerShell cmdlet
-surface and a Python backend, and the two halves have to talk across a process
-boundary. How they talk, and what that costs in latency and in the fidelity of
-error messages, is the question that has to be answered before anything else is
-worth writing. The first release records that decision in `docs/architecture.md`
-and demonstrates exactly one command working end to end against a real domain.
+The module is split between a PowerShell cmdlet surface and a Python backend,
+and the two halves talk across a process boundary. `docs/architecture.md`
+records how they talk and what that costs; `docs/cmdlets.md` records what each
+cmdlet accepts and returns.
 
 Work is tracked in the
 [issue tracker](https://github.com/HardenSamba/samba-powershell/issues), in this
@@ -43,11 +43,14 @@ with tab completion.
 
 ## What it does
 
-The architecture proof now provides a real PowerShell module, a versioned JSON
-process boundary and one `Get-ADUser` path for a distinguished name. Its
-directory adapter imports the public client being built in `samba-adws#7`; the
-offline boundary is tested, while the live-domain acceptance run remains to be
-recorded.
+Four read cmdlets exist today. `Get-ADUser`, `Get-ADComputer` and `Get-ADGroup`
+take an identity as a distinguished name, a GUID, a SID or an account name;
+`Get-ADObject` takes a distinguished name, a GUID or a SID, as on Windows. Each
+returns a typed object carrying the default properties the Windows module
+returns, every one present even when unset. `-Properties` adds attributes,
+typed by the schema; `-Properties *` returns every stored attribute. Objects
+pipe into the next cmdlet by their `DistinguishedName`, and failures are
+`ErrorRecord`s with stable `SambaAD.*` identifiers.
 
 The completed module will provide:
 
@@ -105,7 +108,7 @@ Taken from `MODULE.yaml`, which is the authoritative declaration.
 | Operating system | Debian, plain | The module must install and run without the HardenSamba image |
 | Python | 3.11 or later | Declared in `pyproject.toml`; the ecosystem targets the version in Debian stable |
 | Samba AD domain | Required | The module administers a directory; it has nothing to do without one |
-| Module dependency | `samba-adws` (depends) | The cmdlets speak the Active Directory Web Services protocol, which that module implements |
+| Module dependency | `samba-adws` (depends), 1.0.0 or later | The cmdlets speak the Active Directory Web Services protocol, which that module implements; its search client resolves account names and reads the schema |
 | Debian packages | `powershell` | The cmdlet surface is a PowerShell module and needs a PowerShell host |
 
 **Installs on:** domain controller or workstation. It is a client-side tool, so
@@ -139,7 +142,7 @@ Until then, that command fails with `Unable to locate package`.
 
 ### From source
 
-This works today and runs the architecture-proof backend from a checkout.
+This works today and runs the backend of the four read cmdlets from a checkout.
 
 ```bash
 git clone https://github.com/HardenSamba/samba-powershell.git
@@ -189,28 +192,33 @@ options:
 is deliberately named `samba-ad-backend` and is an internal process boundary,
 not an imitation shell command.
 
-### PowerShell architecture proof
+### Reading the directory
 
-With `samba-ad-backend` on `PATH`, the `samba-adws#7` client available and a
-Kerberos ticket for the calling user, the implemented proof from a checkout is:
+With `samba-ad-backend` on `PATH`, samba-adws installed and a Kerberos ticket
+for the calling user (`kinit`), from a checkout:
 
 ```powershell
 $env:PSModulePath = (Join-Path $PWD 'powershell') + `
   [IO.Path]::PathSeparator + $env:PSModulePath
 $env:SAMBA_AD_SERVER = 'dc1.example.com'
-Import-Module SambaAD
 
-Get-ADUser `
-  -Identity 'CN=Jane Doe,OU=Staff,DC=example,DC=com' `
-  -Server $env:SAMBA_AD_SERVER
+Get-ADUser jdoe
+Get-ADUser 'CN=Jane Doe,OU=Staff,DC=example,DC=com' -Properties mail, memberOf
+Get-ADComputer PC01
+Get-ADGroup 'Domain Admins' -Properties member
+Get-ADObject 'OU=Staff,DC=example,DC=com' -Properties *
+Get-ADUser jdoe | Get-ADObject -Properties whenChanged
 ```
+
+`-Server` and `SAMBA_AD_SERVER` take the controller's DNS host name: Kerberos
+authenticates `host/<name>`, so an IP address does not work.
 
 For an offline checkout proof that creates its own temporary backend wrapper
 and module path, run `pwsh -NoProfile -File tests/test_powershell.ps1
 -PythonPath "$(command -v python3)"` from Bash.
 
-The remaining identity forms, filters, paging and write surface belong to the
-next two tickets. Their target syntax is:
+Filters, paging and the write surface belong to the next tickets. Their target
+syntax is:
 
 ```powershell
 Get-ADUser -Filter 'Name -like "j*"' -Properties mail,memberOf
@@ -223,12 +231,13 @@ Remove-ADUser -Identity jdoe -WhatIf
 ```
 
 Authentication follows the transport through the caller's existing Kerberos
-ticket cache. The module will not carry a permission model of its own. The
-server must enforce the calling principal's directory rights, but it currently
-uses a SYSTEM `SamDB` session; that security blocker is tracked in
-[`samba-adws#8`](https://github.com/HardenSamba/samba-adws/issues/8). No write
-surface is considered safe or complete until that issue has a live allow/deny
-proof.
+ticket cache. The module carries no permission model of its own: samba-adws
+runs every request as the principal that authenticated it
+([`samba-adws#8`](https://github.com/HardenSamba/samba-adws/issues/8), fixed in
+samba-adws 1.0.0). Reads are not yet filtered attribute by attribute on the
+server ([`samba-adws#17`](https://github.com/HardenSamba/samba-adws/issues/17)),
+so a caller can read attributes its ACLs hide over LDAP. No write surface is
+considered safe or complete until #8 has a live allow/deny proof.
 
 ## Configuration
 
@@ -258,11 +267,13 @@ port = 9389
 # Seconds to wait for a response before the cmdlet gives up.
 timeout = 30
 
-[output]
-# Attributes returned when a cmdlet is called without -Properties.
-# Keeping this list short keeps queries against large directories cheap.
-default_properties = distinguishedName,name,objectClass,sAMAccountName
 ```
+
+The default property set is deliberately not a configuration key. It is the
+decided contract of `docs/cmdlets.md`: the defaults administrators know from
+Windows, with `-Properties` adding to the set rather than replacing it. A knob
+that changes it per machine would make the same script return different columns
+on different controllers.
 
 When configuration becomes real, the file will be marked as a Debian conffile so
 administrator edits survive package upgrades, and every key will be documented
@@ -313,8 +324,8 @@ cd samba-powershell
 sudo apt install python3 python3-pytest python3-mypy git \
   python3-yaml python3-jsonschema
 
-python3 -m pytest tests -q        # 16 passed
-mypy --strict src                 # Success: no issues found in 9 source files
+PYTHONPATH=src python3 -m pytest tests -q   # every test passes
+mypy --strict src                           # Success: no issues found
 ```
 
 `python3-yaml` and `python3-jsonschema` are there for `modulekit`, which needs
@@ -334,17 +345,22 @@ If `modulekit` is not installed, run it from a checkout:
 ```bash
 git clone https://github.com/HardenSamba/hardensamba-modulekit /tmp/mk
 PYTHONPATH=/tmp/mk/src python3 -m modulekit.cli validate .
-PYTHONPATH=/tmp/mk/src python3 -m modulekit.cli lint src tests
+PYTHONPATH=/tmp/mk/src python3 -m modulekit.cli lint src benchmarks
+PYTHONPATH=/tmp/mk/src python3 -m modulekit.norms tests --require-headers \
+  --max-functions 50 --max-classes 5
 ```
 
 CI runs on `debian:stable`, never on a HardenSamba image. A test that only
 passes with extra software installed is a defect in the test.
 
-`.github/workflows/ci.yml` holds one job, `test`. It installs `python3`,
-`python3-pytest` and `mypy` on `debian:stable`, then runs `mypy --strict src`
-and `PYTHONPATH=src python3 -m pytest tests -q`. Both steps fail the job when
-they fail, so a red run means a real failure. What the job does not do is check
-the contract:
+`.github/workflows/ci.yml` holds two jobs on `debian:stable`. `test` installs
+`python3`, `python3-pytest` and `mypy`, then runs `mypy --strict src`,
+`PYTHONPATH=src python3 -m pytest tests -q` and `benchmarks/transport.py`.
+`powershell` installs PowerShell from Microsoft's repository, validates the
+module manifest, and runs `tests/test_powershell.ps1`,
+`tests/test_composition.ps1` and `benchmarks/transport.ps1`. Every step fails
+its job when it fails, so a red run means a real failure. What neither job does
+is check the contract:
 
 - `modulekit validate .` and `modulekit lint` are not run in CI. The contract
   job that ran the validator has been removed rather than repaired: it cloned
@@ -361,7 +377,8 @@ the contract:
 No check gates a merge in any case. The organisation is on a free plan, where
 private repositories cannot have branch protection or required status checks at
 all, so a green tick has never been a condition of merging here. It means the
-type checker and the three smoke tests passed, and nothing else.
+type checker, the Python tests and the two PowerShell test scripts passed, and
+nothing else.
 
 ### Layout
 
@@ -375,7 +392,7 @@ type checker and the three smoke tests passed, and nothing else.
 | `benchmarks/` | Required process and Unix-socket transport prototypes |
 | `docs/` | English architecture and behaviour documentation |
 | `debian/` | Packaging. The reference installation method |
-| `.github/workflows/` | CI on plain Debian: `mypy --strict` and pytest |
+| `.github/workflows/` | CI on plain Debian: `mypy --strict`, pytest and the PowerShell tests |
 | `.claude/` | Agents and a skill for assisted development |
 
 ### Claude agents
@@ -451,14 +468,12 @@ breaks it. `CLAUDE.md` carries the same marker for the same reason.
 
 ## Licence
 
-**Not settled.** This repository carries no `LICENSE` file, and inventing one
-here would be worse than saying so.
+Proprietary. The terms are the HardenSamba Proprietary Software License,
+version 1.0, in [`LICENSE`](LICENSE). The Debian packaging's `debian/copyright`
+still names no licence; aligning it belongs to the packaging work of ticket #5.
 
 This is a greenfield module, not a fork. There is no upstream project, no
 inherited licence and no divergence to describe. The closest reference points
 are the published cmdlet surface of the Windows `ActiveDirectory` module and the
 wire behaviour implemented in `samba-adws`, and neither is a code ancestor of
 anything here.
-
-A licence will be chosen and committed before the first release. Until a
-`LICENSE` file exists, treat the terms as undetermined.

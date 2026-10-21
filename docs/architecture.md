@@ -16,21 +16,24 @@ The conflict between that fact and contracts 7.2 and 11.3 is tracked in
 The package release remains blocked by that decision; this repository does not
 silently weaken the relationship to `Recommends`.
 
-The supported client API required from the server module is tracked in
-[samba-adws#7](https://github.com/HardenSamba/samba-adws/issues/7). Wire framing,
-WCF encoding and GSSAPI remain owned by that module rather than copied here.
-Its installable Debian artefact is tracked separately in
-[samba-adws#6](https://github.com/HardenSamba/samba-adws/issues/6). Until that
-lands, the source proof may use the client checkout but the declared package
-dependency cannot be satisfied from the HardenSamba archive.
+The backend reads through the supported client API of the server module,
+delivered by [samba-adws#7](https://github.com/HardenSamba/samba-adws/issues/7):
+`samba_adws.ADWSSearchClient`, which reads one object, names a naming context
+and enumerates, with `samba_adws.search_query` to build a search. Both ship in
+every packaged samba-adws release, 1.0.0 onwards, and are imported only when a
+command reaches the network. Wire framing, WCF encoding and GSSAPI remain owned
+by that module rather than copied here. The samba-adws Debian package exists
+([samba-adws#6](https://github.com/HardenSamba/samba-adws/issues/6)), but the
+HardenSamba archive does not publish it yet, so the declared package dependency
+is satisfied by installing that package directly.
 
-The client preserves the caller's Kerberos cache, but the current ADWS server
-does not yet bind its accepted GSSAPI identity to the `SamDB` session. That
-authorization flaw is tracked in
-[samba-adws#8](https://github.com/HardenSamba/samba-adws/issues/8). A live read
-can prove authentication and the end-to-end protocol, but it must not be cited
-as proof that Samba evaluated the caller's ACLs. Write cmdlets remain blocked
-until #8 has a live allow/deny test.
+The client preserves the caller's Kerberos cache, and samba-adws runs every
+request as the principal that authenticated it
+([samba-adws#8](https://github.com/HardenSamba/samba-adws/issues/8), fixed in
+samba-adws 1.0.0). Two limits remain on the server side. Reads are not filtered
+attribute by attribute ([samba-adws#17](https://github.com/HardenSamba/samba-adws/issues/17)),
+so a caller can read attributes its ACLs hide over LDAP, and no live allow/deny
+test of #8 has been recorded. Write cmdlets remain blocked until it has.
 
 ## Chosen process boundary
 
@@ -51,8 +54,11 @@ The initial version deliberately chooses one process per invocation. It has a
 measurable interpreter-start cost, but it has no daemon lifecycle, shared-user
 state, stale socket or credential-cache ambiguity. A single backend invocation
 may keep one ADWS connection for a multi-message operation such as
-Enumerate/Pull/Release. The decision can be revisited only with measurements
-and without changing the JSON envelopes.
+Enumerate/Pull/Release. A read of the default set is one exchange; an
+account-name identity or named properties add a RootDSE read and one search
+each, every exchange its own connection, about 0.2 s apiece against a
+controller on the local network. The decision can be revisited only with
+measurements and without changing the JSON envelopes.
 
 The rejected prototype is a process resident for the PowerShell session,
 speaking the same request-response JSON over a Unix-domain socket beneath the
@@ -76,7 +82,8 @@ Protocol version 1 accepts one request:
 }
 ```
 
-A successful response separates the PowerShell type name from its properties:
+A successful response separates the PowerShell type name from its properties,
+abridged here, and names the properties whose values are times:
 
 ```json
 {
@@ -85,12 +92,18 @@ A successful response separates the PowerShell type name from its properties:
   "result": {
     "type": "SambaAD.User",
     "properties": {
+      "DistinguishedName": "CN=Alice,DC=example,DC=com",
       "Name": "Alice",
-      "DistinguishedName": "CN=Alice,DC=example,DC=com"
-    }
+      "whenCreated": "2024-02-29T12:00:00+00:00"
+    },
+    "datetimes": ["whenCreated"]
   }
 }
 ```
+
+Times travel as ISO 8601 text because JSON has no time type; `datetimes` is what
+lets PowerShell turn exactly those into `DateTime` and leave any other text as
+text. A reader of version 1 that ignores the field still gets every value.
 
 Failures use a JSON envelope on standard output even when the process exits
 non-zero:
@@ -100,8 +113,8 @@ non-zero:
   "version": 1,
   "ok": false,
   "error": {
-    "message": "The directory object was not found.",
-    "error_id": "SambaAD.IdentityNotFound",
+    "message": "Cannot find an object with identity 'alice'.",
+    "error_id": "SambaAD.ObjectNotFound",
     "category": "ObjectNotFound",
     "target": "alice"
   }
@@ -121,12 +134,24 @@ that do not decode raise the same typed `SambaAD.InvalidRequest` error as
 malformed JSON.
 
 Objects become `PSCustomObject` instances whose first `PSTypeName` is the
-response `type`. `powershell/SambaAD/SambaAD.Format.ps1xml` supplies the default
-table view, so `Get-Member` sees properties rather than a JSON string.
-The architecture proof requests only `distinguishedName`, `name`, and
-`sAMAccountName` by default. Binary and time-valued attribute conversion is the
-explicit value-shape decision in ticket #3; requesting those values is not
-claimed by this ticket.
+response `type`, and whose `ToString()` is the distinguished name.
+`powershell/SambaAD/SambaAD.Format.ps1xml` supplies the default table view, so
+`Get-Member` sees properties rather than a JSON string. Which properties an
+object carries, and how each value is converted, is decided in
+[cmdlets.md](cmdlets.md).
+
+A backend that cannot be started, or that answers outside the protocol, is
+reported the same way as any other failure: a non-terminating `ErrorRecord`,
+`SambaAD.BackendUnavailable` or `SambaAD.ProtocolError`. The bridge returns that
+record rather than throwing it, because an exception caught on the way would
+still be appended to the caller's `-ErrorVariable` beside the record. For the
+same reason it checks what it can before acting — that the calling user can
+execute the backend, asked through `test -x`; that the envelope parses, as a
+hashtable, into every field the cmdlets read, with names an object can hold —
+and writes the request through a task rather than a call that throws, so a
+backend that exits before reading it is judged by its answer and its standard
+error. What it cannot check beforehand, a script whose interpreter is gone,
+still leaves PowerShell's own record of the failed start.
 
 ## Transport measurements
 
@@ -170,16 +195,15 @@ substituted for the acceptance environment.
 | `benchmarks/transport.ps1` | PowerShell-to-Python acceptance measurements |
 | `benchmarks/transport.py` | Lower-level transport reproducibility check |
 
-The proof command currently accepts a distinguished name. Identity resolution
-by GUID, SID and sAMAccountName belongs to ticket #3. On a lab workstation with
-a Kerberos ticket and `samba-adws#7` installed, the end-to-end proof is:
+On a lab workstation with a Kerberos ticket and samba-adws installed, the
+end-to-end check from a checkout is:
 
 ```powershell
 $env:SAMBA_AD_SERVER = 'dc1.example.com'
 $env:PSModulePath = (Join-Path $PWD 'powershell') + `
   [IO.Path]::PathSeparator + $env:PSModulePath
 Import-Module SambaAD
-Get-ADUser 'CN=Alice,DC=example,DC=com' | Get-Member
+Get-ADUser alice | Get-Member
 ```
 
 The offline test substitutes only the ADWS client boundary. A live run must be

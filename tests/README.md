@@ -1,8 +1,10 @@
 Tests must run on a plain Debian system, without the HardenSamba image.
 
 `test_live_adws.ps1` is the acceptance boundary for a provisioned Samba AD
-domain and the supported `samba-adws` client. Obtain a Kerberos ticket before
-starting PowerShell; the script deliberately has no password parameter. Pass a
+domain and the supported `samba-adws` client, 1.0.0 or later. Obtain a Kerberos
+ticket before starting PowerShell; the script deliberately has no password
+parameter. Where the samba-adws package is installed, its client imports without
+any path, and the launcher only needs this checkout's `src`. Otherwise pass a
 backend launcher whose Python path contains both source trees:
 
 From the `samba-powershell` checkout, with `samba-adws` checked out beside it,
