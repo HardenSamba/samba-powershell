@@ -11,6 +11,11 @@ from tests.backend_calls import answered, request_for
 from tests.fake_client import FakeClient
 
 
+# A bare host reaches LDAP's own port, the one every controller serves.
+def test_the_default_port_is_ldap() -> None:
+    assert requested_endpoint({"server": "dc1"}) == ("dc1", 389, "dc1")
+
+
 # A server given only as whitespace is no server, and says so the same way an
 # absent one does.
 @pytest.mark.parametrize("server", ["", "   "])

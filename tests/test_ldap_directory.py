@@ -9,6 +9,7 @@ import pytest
 from samba_powershell.client_error import translate_client_error
 from samba_powershell.ldap_directory import LdapDirectory
 from samba_powershell.ldap_session import open_directory
+from samba_powershell.ldap_values import decoded_entry
 from tests.fake_ldap import ALICE_DN, BUILTIN_SID, SCHEMA_NC, FakeConnection, ServerDown, fake_api
 
 BASE = "DC=example,DC=com"
@@ -35,6 +36,31 @@ def test_values_take_the_shapes_the_renderer_reads() -> None:
 # The distinguished name is present whether or not the read named it.
 def test_the_distinguished_name_is_always_present() -> None:
     assert directory()[0].get_by_dn(ALICE_DN, ["name"])["distinguishedName"] == ALICE_DN
+
+
+# A distinguished name the server answered with is not added a second time,
+# whichever way the server spelled the attribute.
+def test_the_distinguished_name_is_not_doubled() -> None:
+    for spelling in ("distinguishedName", "DistinguishedName"):
+        assert decoded_entry(ALICE_DN, {spelling: [ALICE_DN.encode()]}, ()) == {
+            spelling: ALICE_DN}
+
+
+# Every syntax that is not text is asked about: octet string, security
+# descriptor and SID.
+def test_the_schema_is_asked_about_every_binary_syntax() -> None:
+    reader, connection = directory()
+    reader.get_by_dn(ALICE_DN)
+    for oid in ("2.5.5.10", "2.5.5.15", "2.5.5.17"):
+        assert f"(attributeSyntax={oid})" in connection.searches[0][2]
+
+
+# A server that answers more than a page asked for still gives no more than the
+# limit, so a question about uniqueness cannot be misled about its size.
+def test_a_search_never_returns_more_than_its_limit() -> None:
+    reader, connection = directory()
+    connection.pages = [[ENTRY, ENTRY, ENTRY]]
+    assert len(reader.search(BASE, "Subtree", "(cn=A)", ["cn"], 2)) == 2
 
 
 # An empty projection asks for the whole object, and a named one for those names.
