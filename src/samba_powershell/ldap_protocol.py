@@ -1,4 +1,4 @@
-"""The part of a python-ldap connection this module relies on."""
+"""The part of a python-ldap connection that reads the directory."""
 
 from __future__ import annotations
 
@@ -9,18 +9,12 @@ from typing import Protocol
 RawEntry = tuple[str | None, dict[str, list[bytes]]]
 
 
-# ldap.ldapobject.LDAPObject as this module calls it, so the adapter is typed
-# without importing python-ldap before a command reaches the network.
+# ldap.ldapobject.LDAPObject as the adapter reads through it, so the adapter is
+# typed without importing python-ldap before a command reaches the network.
 class LdapConnection(Protocol):
-    # Sets one option of the session.
-    def set_option(self, option: int, value: object) -> None: ...
-
-    # Binds through SASL with the credentials the mechanism finds on its own.
-    def sasl_interactive_bind_s(self, who: str, auth: object) -> None: ...
-
     # Runs one search and waits for all of its answer.
-    def search_ext_s(self, base: str, scope: int, filterstr: str,
-                     attrlist: list[str] | None) -> list[RawEntry]: ...
+    def search_ext_s(self, base: str, scope: int, filterstr: str, attrlist: list[str] | None,
+                     serverctrls: list[object] | None = None) -> list[RawEntry]: ...
 
     # Starts one search carrying server controls, and returns its message id.
     def search_ext(self, base: str, scope: int, filterstr: str, attrlist: list[str] | None,

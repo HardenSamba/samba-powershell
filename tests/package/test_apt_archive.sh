@@ -32,8 +32,9 @@ export GNUPGHOME
 chmod 700 "$GNUPGHOME"
 gpg --batch --quiet --passphrase '' --quick-generate-key 'throwaway archive key' rsa3072 sign 1d
 KEY=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ { print $10; exit }')
-gpg --export "$KEY" > "$ARCHIVE/key.gpg"
-chmod 0644 "$ARCHIVE/key.gpg"
+# The key is written the documented way, under the strictest umask a hardened
+# system uses, because apt reads it as the unprivileged user _apt.
+(umask 077; gpg --export "$KEY" | install -m 0644 /dev/stdin "$ARCHIVE/key.gpg")
 
 mkdir -p "$ARCHIVE/pool/main/s/samba-powershell"
 cp dist/samba-powershell_*_all.deb "$ARCHIVE/pool/main/s/samba-powershell/"

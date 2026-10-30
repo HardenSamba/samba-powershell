@@ -15,6 +15,7 @@ NO_SUCH_OBJECT = 32
 REFERRAL = 10
 INVALID_DN_SYNTAX = 34
 INSUFFICIENT_ACCESS = 50
+TIMED_OUT = -5
 MISSING = {NO_SUCH_OBJECT, REFERRAL}
 # Server down, local error, encoding, decoding, timeout, unknown authentication
 # method, connect error; then the bind refusals a server can answer with.
@@ -23,11 +24,11 @@ TRANSPORT = {-1, -2, -3, -4, -5, -6, -11, 7, 8, 48, 49}
 # What usually lies behind a transport failure, keyed by a phrase of the
 # underlying message, worded as what the operator can do about it.
 HINTS = (
-    ("no credentials", " Obtain a Kerberos ticket with kinit, or point KRB5CCNAME at a "
-     "cache that holds one."),
+    ("no credentials", " Obtain a Kerberos ticket with kinit, from the Debian package "
+     "krb5-user, or point KRB5CCNAME at a cache that holds one."),
     ("server not found in kerberos database", " -Server must be the domain controller's "
-     "DNS host name: Kerberos authenticates ldap/<name>, so an IP address or an alias has "
-     "no principal to authenticate."),
+     "DNS host name: Kerberos authenticates ldap/<name>, and an IP address or an alias "
+     "usually has no such principal."),
     ("no worthy mechs", " Kerberos is not available to LDAP here; install the Debian package "
      "libsasl2-modules-gssapi-mit."),
     ("too weak", " The session could not be encrypted, and the cmdlets refuse to read the "
@@ -55,12 +56,16 @@ def translate_client_error(error: Exception, server: str, identity: str) -> Back
         return BackendError(message, "SambaAD.AccessDenied", "PermissionDenied", identity)
     if result == INVALID_DN_SYNTAX:
         return BackendError(message, "SambaAD.InvalidIdentity", "InvalidArgument", identity)
-    return BackendError(message, "SambaAD.ClientFailure", "NotSpecified", identity)
+    return BackendError(message or type(error).__name__, "SambaAD.ClientFailure",
+                        "NotSpecified", identity)
 
 
 # The result code and the wording of a python-ldap failure, which arrive as a
-# dictionary in its first argument; any other exception has only its text.
+# dictionary in its first argument; any other exception has only its text. A
+# timeout waiting for an answer is the exception: ldap.TIMEOUT says nothing at all.
 def ldap_failure(error: Exception) -> tuple[int | None, str]:
+    if not error.args and type(error).__name__ == "TIMEOUT":
+        return TIMED_OUT, "timed out"
     details = error.args[0] if error.args else None
     if not isinstance(details, dict):
         return None, str(error)

@@ -118,7 +118,30 @@ def test_the_session_requires_protection() -> None:
     connection = FakeConnection("")
     open_directory(fake_api(connection), "dc1.example.com", 1389, 30.0)
     assert connection.uri == "ldap://dc1.example.com:1389"
-    assert connection.options == {1: 3, 2: 0, 3: 1, 4: "minssf=56", 5: 10.0, 6: 30.0}
+    assert connection.options == {
+        1: 3, 2: 0, 3: 1, 4: "minssf=56,maxbufsize=65536", 5: 10.0, 6: 30.0}
+
+
+# A session weaker than required is refused after the bind, whatever a
+# configuration file made of the request, including one with no layer at all.
+@pytest.mark.parametrize("strength", [None, 0, 1, 55])
+def test_a_session_too_weak_is_refused(strength: object) -> None:
+    connection = FakeConnection("", strength=strength)
+    with pytest.raises(OSError) as raised:
+        open_directory(fake_api(connection), "dc1", 389, 30.0)
+    error = translate_client_error(raised.value, "dc1", "x")
+    assert (error.error_id, error.category) == ("SambaAD.TransportError", "AuthenticationError")
+    assert "encrypted" in error.message
+
+
+# A read asks for the owner, group and DACL only, so a caller who may not read
+# the SACL still gets a security descriptor, and the control is not critical.
+def test_a_read_asks_for_a_descriptor_it_may_read() -> None:
+    reader, connection = directory()
+    reader.get_by_dn(ALICE_DN)
+    control = next(item[0] for item in connection.controls if item)
+    assert (control.controlType, control.criticality, control.value) == (
+        "1.2.840.113556.1.4.801", False, b"\x30\x03\x02\x01\x07")
 
 
 # What the library calls "Can't contact LDAP server" is replaced by the reason

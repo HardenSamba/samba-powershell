@@ -3,6 +3,16 @@
 from __future__ import annotations
 
 
+# Holds a control's value, as the real control does.
+class RequestControl:
+    # Stores the control as given.
+    def __init__(self, controlType: str, criticality: bool = False,
+                 encodedControlValue: bytes = b"") -> None:
+        self.controlType = controlType
+        self.criticality = criticality
+        self.encodedControlValue = encodedControlValue
+
+
 # Holds what one page asks for, as the real control does.
 class SimplePagedResultsControl:
     controlType = "1.2.840.113556.1.4.319"

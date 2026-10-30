@@ -2,13 +2,14 @@ Set-StrictMode -Version Latest
 
 # Install-Module copies the module folder and nothing else, so a module from the
 # gallery holds its backend beside itself, and runs it through the interpreter
-# the Debian Python packages install for, since unpacking drops execute bits.
+# the Debian Python packages install for, since unpacking drops execute bits. -E
+# keeps a stray PYTHONPATH from loading code out of the current directory.
 $script:BundledBackend = Join-Path $PSScriptRoot 'backend/samba_ad_backend.py'
 $script:BackendArguments = @()
 $script:BackendCommand = if ($env:SAMBA_POWERSHELL_BACKEND) {
     $env:SAMBA_POWERSHELL_BACKEND
 } elseif ([System.IO.File]::Exists($script:BundledBackend)) {
-    $script:BackendArguments = @('-B', $script:BundledBackend)
+    $script:BackendArguments = @('-B', '-E', $script:BundledBackend)
     '/usr/bin/python3'
 } else {
     'samba-ad-backend'

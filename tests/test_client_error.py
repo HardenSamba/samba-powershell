@@ -82,6 +82,28 @@ def test_network_failures_are_categorised(failure: Exception, category: str, hin
     assert hint in error.message
 
 
+# ldap.TIMEOUT arrives with no arguments at all, and is still a timeout.
+def test_a_timeout_with_no_arguments_is_a_timeout() -> None:
+
+    # Named the way python-ldap names it.
+    class TIMEOUT(Exception):
+        pass
+
+    error = translated(TIMEOUT())
+    assert (error.error_id, error.category, error.target) == (
+        "SambaAD.TransportError", "OperationTimeout", SERVER)
+
+
+# A failure that says nothing is still named, rather than reported as blank.
+def test_a_silent_failure_is_named() -> None:
+
+    # Carries no wording, as a few library exceptions do.
+    class Silent(Exception):
+        pass
+
+    assert translated(Silent()).message == "Silent"
+
+
 # A missing object is reported against the identity, in Windows's wording,
 # whether the server said so, pointed elsewhere, or answered with nothing.
 @pytest.mark.parametrize("failure", [

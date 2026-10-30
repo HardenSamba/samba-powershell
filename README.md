@@ -17,9 +17,10 @@ speaking to a Samba domain controller.
 `Get-ADGroup` and `Get-ADObject` read a Samba domain directly over LDAP,
 encrypted and authenticated with the caller's Kerberos ticket. They need nothing
 on the domain controller but Samba: CI proves that against a freshly provisioned
-domain with no other service installed. They install through `apt`, through
-`Install-Module` or through `install.sh`, each checked in CI. The write cmdlets
-are not done.
+domain with no other service installed. CI installs them from a throwaway signed
+archive, from a throwaway gallery feed and through `install.sh`. The public archive
+and the gallery entry go live with the first release. The write cmdlets are not
+done.
 
 What is actually in this repository today:
 
@@ -131,12 +132,15 @@ them.
 
 ### The package
 
+**Not published yet:** the archive goes live with the first release, which needs
+the owner's signing key. Until then use `install.sh` or a package built by hand.
+
 With PowerShell available as [`docs/packaging.md`](docs/packaging.md) describes,
 add the signed archive once, then install:
 
 ```bash
-sudo curl -fsSLo /usr/share/keyrings/hardensamba-samba-powershell.gpg \
-  https://hardensamba.github.io/samba-powershell/hardensamba-samba-powershell.gpg
+curl -fsSL https://hardensamba.github.io/samba-powershell/hardensamba-samba-powershell.gpg \
+  | sudo install -m 0644 /dev/stdin /usr/share/keyrings/hardensamba-samba-powershell.gpg
 echo "deb [signed-by=/usr/share/keyrings/hardensamba-samba-powershell.gpg] https://hardensamba.github.io/samba-powershell $(. /etc/os-release; echo "$VERSION_CODENAME") main" \
   | sudo tee /etc/apt/sources.list.d/samba-powershell.list
 sudo apt update
@@ -144,9 +148,13 @@ sudo apt install samba-powershell
 ```
 
 A new `pwsh` finds the cmdlets, with `Import-Module SambaAD` or without it. `sudo
-apt purge samba-powershell` removes everything it installed.
+apt purge samba-powershell` removes everything it installed. `kinit` comes from
+`krb5-user`, which the package recommends; [`docs/packaging.md`](docs/packaging.md#first-use) covers first use.
 
 ### The PowerShell Gallery
+
+**Not published yet:** the module reaches the gallery with the first release made
+with the owner's gallery API key.
 
 ```powershell
 Install-Module SambaAD
@@ -154,8 +162,8 @@ Import-Module SambaAD
 ```
 
 The module holds its own backend, but a gallery cannot install a Debian package,
-so `python3-ldap` and `libsasl2-modules-gssapi-mit` must be there first; a cmdlet
-says so when they are not. Use the package or the gallery on one system, not both.
+so `python3-ldap`, `libsasl2-modules-gssapi-mit` and `krb5-user` must be there
+first; a cmdlet names the first two when they are not. Use the package or the gallery on one system, not both.
 
 ### Without the archive
 
@@ -226,7 +234,8 @@ Get-ADUser jdoe | Get-ADObject -Properties whenChanged
 ```
 
 `-Server` and `SAMBA_AD_SERVER` take the controller's DNS host name: Kerberos
-authenticates `host/<name>`, so an IP address does not work.
+authenticates `ldap/<name>`, and an IP address or an alias usually has no such
+principal.
 
 For an offline checkout proof that creates its own temporary backend wrapper
 and module path, run `pwsh -NoProfile -File tests/test_powershell.ps1
@@ -321,7 +330,7 @@ of the ecosystem, facing the operator. Checked against every sibling manifest.
 | Migration from a Microsoft forest | `ad-migration-toolkit` |
 | Backup and restore of the domain | `samba-domain-backup` |
 | Cross-module interoperability testing | `interop-test-suite` |
-| The APT repository the package is published to | `hardensamba-apt` |
+| The ecosystem's APT repository, the package's future home | `hardensamba-apt` |
 
 This module must never depend on `hardensamba`, the image itself. That direction
 is forbidden by the contract: the image depends on modules, not the reverse. If
@@ -355,6 +364,7 @@ python3 -m modulekit.norms tests --require-headers \
 If `modulekit` is not installed, run it from a checkout:
 
 ```bash
+# hardensamba-modulekit is private: this needs access to the organisation.
 git clone https://github.com/HardenSamba/hardensamba-modulekit /tmp/mk
 PYTHONPATH=/tmp/mk/src python3 -m modulekit.cli validate .
 PYTHONPATH=/tmp/mk/src python3 -m modulekit.cli lint src benchmarks
@@ -389,12 +399,13 @@ the contract:
   Tracked in
   [HardenSamba/hardensamba#5](https://github.com/HardenSamba/hardensamba/issues/5).
 
-No check gates a merge in any case. The organisation is on a free plan, where
-private repositories cannot have branch protection or required status checks at
-all, so a green tick has never been a condition of merging here. It means the
-type checker, the Python tests and the two PowerShell test scripts passed, and
-that the package built, passed lintian, and installed, worked and purged clean
-in a fresh container, as did `install.sh`; nothing else.
+No check gates a merge in any case: the default branch has no protection, so a
+green tick is not a condition of merging here. It means the type checker, the
+Python tests and the two PowerShell test scripts passed; that the package built,
+passed lintian, and installed, worked and purged clean in a fresh container, as
+did `install.sh`; that it installed through apt alone from a signed archive and
+from a local gallery feed; and that it read a freshly provisioned Samba domain.
+Nothing else.
 
 ### Layout
 

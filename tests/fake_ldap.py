@@ -34,12 +34,24 @@ class PagedControl:
         self.cookie = cookie
 
 
+# A request control, reduced to what the adapter sends.
+class RequestControl:
+    # Stores the control as it would go on the wire.
+    def __init__(self, control_type: str, criticality: bool, value: bytes) -> None:
+        self.controlType = control_type
+        self.criticality = criticality
+        self.value = value
+
+
 # A connection answering from fixed tables, recording every call it was given.
 class FakeConnection:
-    # Starts with no pages queued and the bind succeeding.
-    def __init__(self, uri: str, bind_failure: Exception | None = None) -> None:
+    # Starts with no pages queued, the bind succeeding and the session encrypted.
+    def __init__(self, uri: str, bind_failure: Exception | None = None,
+                 strength: object = 256) -> None:
         self.uri = uri
         self.bind_failure = bind_failure
+        self.strength = strength
+        self.controls: list[list[RequestControl] | None] = []
         self.options: dict[int, object] = {}
         self.pages: list[list[tuple[str | None, dict[str, list[bytes]]]]] = []
         self.searches: list[tuple[str, int, str, list[str] | None, int]] = []
@@ -50,15 +62,23 @@ class FakeConnection:
     def set_option(self, option: int, value: object) -> None:
         self.options[option] = value
 
+    # Reads the session's strength; a session with no layer has none to read.
+    def get_option(self, option: int) -> object:
+        if self.strength is None:
+            raise ValueError("option error")
+        return self.strength
+
     # Succeeds, or fails the way the test asked.
     def sasl_interactive_bind_s(self, who: str, auth: object) -> None:
         if self.bind_failure is not None:
             raise self.bind_failure
 
     # Answers the RootDSE and one known object; anything else is hidden.
-    def search_ext_s(self, base: str, scope: int, filterstr: str,
-                     attrlist: list[str] | None) -> list[tuple[str | None, dict[str, list[bytes]]]]:
+    def search_ext_s(self, base: str, scope: int, filterstr: str, attrlist: list[str] | None,
+                     serverctrls: list[RequestControl] | None = None,
+                     ) -> list[tuple[str | None, dict[str, list[bytes]]]]:
         self.reads.append((base, attrlist))
+        self.controls.append(serverctrls)
         if base == "":
             return [("", {"schemaNamingContext": [SCHEMA_NC.encode()]})]
         return [(ALICE_DN, ALICE)] if base == ALICE_DN else [(None, {})]
@@ -91,6 +111,6 @@ def fake_api(connection: FakeConnection) -> LdapApi:
             initialize=lambda uri: setattr(connection, "uri", uri) or connection,
             SERVER_DOWN=ServerDown, VERSION3=3, SCOPE_BASE=0, SCOPE_ONELEVEL=1, SCOPE_SUBTREE=2,
             OPT_PROTOCOL_VERSION=1, OPT_REFERRALS=2, OPT_X_SASL_NOCANON=3,
-            OPT_X_SASL_SECPROPS=4, OPT_NETWORK_TIMEOUT=5, OPT_TIMEOUT=6),
+            OPT_X_SASL_SECPROPS=4, OPT_NETWORK_TIMEOUT=5, OPT_TIMEOUT=6, OPT_X_SASL_SSF=7),
         SimpleNamespace(gssapi=lambda authz: ("gssapi", authz)),
-        SimpleNamespace(SimplePagedResultsControl=PagedControl))
+        SimpleNamespace(SimplePagedResultsControl=PagedControl, RequestControl=RequestControl))

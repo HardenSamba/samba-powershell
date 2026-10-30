@@ -3,7 +3,9 @@ name: release
 # Publishes one tagged version: the Debian package into the signed APT archive
 # served from the gh-pages branch, and the module to the PowerShell Gallery. The
 # branch is the whole archive, so adding a package is a commit and rolling back
-# is reverting one. docs/packaging.md says what the two secrets are.
+# is reverting one. docs/packaging.md says what the two secrets are; they live in
+# the release environment, which serves version tags and waits for an approval, so
+# a writer of the repository can neither read them nor publish alone.
 
 on:
   push:
@@ -23,6 +25,7 @@ jobs:
   apt:
     runs-on: ubuntu-latest
     container: debian:stable
+    environment: release
     steps:
       - name: Install the archive tooling
         run: |
@@ -31,17 +34,23 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Require a tag that agrees with the changelog
+      - name: Require a tag that agrees with every version in the tree
         run: |
           case "$GITHUB_REF" in
             refs/tags/v*) ;;
             *) echo "::error::run this on a version tag, not $GITHUB_REF"; exit 1 ;;
           esac
-          version=$(sed -n '1s/.*(\(.*\)-[^-]*).*/\1/p' debian/changelog)
-          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match debian/changelog $version"
-            exit 1
-          fi
+          for found in \
+            "debian/changelog=$(sed -n '1s/.*(\(.*\)-[^-]*).*/\1/p' debian/changelog)" \
+            "SambaAD.psd1=$(sed -n "s/.*ModuleVersion = '\(.*\)'.*/\1/p" powershell/SambaAD/SambaAD.psd1)" \
+            "pyproject.toml=$(sed -n 's/^version = "\(.*\)".*/\1/p' pyproject.toml)" \
+            "__init__.py=$(sed -n 's/^__version__ = "\(.*\)".*/\1/p' src/samba_powershell/__init__.py)" \
+            "MODULE.yaml=$(sed -n 's/^version: //p' MODULE.yaml)"; do
+            if [ "${found#*=}" != "${GITHUB_REF_NAME#v}" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match ${found%%=*}, ${found#*=}"
+              exit 1
+            fi
+          done
 
       - name: Require the signing key
         env:
@@ -134,6 +143,7 @@ jobs:
     needs: apt
     runs-on: ubuntu-latest
     container: debian:stable
+    environment: release
     env:
       PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
     steps:

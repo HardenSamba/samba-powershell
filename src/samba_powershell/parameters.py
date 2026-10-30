@@ -13,8 +13,9 @@ LDAP_PORT = 389
 # more, control characters such as US and FF included, and resolve the rest.
 PASTE_WHITESPACE = " \t\r\n"
 # A host name or a bracketed address. It goes into an LDAP URI, where a space
-# would start a second server and a slash would end the host.
-HOST = re.compile(r"[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\]")
+# would start a second server and a slash would end the host. A DNS label holds
+# one to 63 characters.
+HOST = re.compile(r"(?:[A-Za-z0-9_-]{1,63}\.)*[A-Za-z0-9_-]{1,63}\.?|\[[0-9A-Fa-f:.]+\]")
 
 
 # Rejects undeclared fields, including credentials that must stay in Kerberos.

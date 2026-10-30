@@ -12,6 +12,7 @@ OPT_X_SASL_NOCANON = 3
 OPT_X_SASL_SECPROPS = 4
 OPT_NETWORK_TIMEOUT = 5
 OPT_TIMEOUT = 6
+OPT_X_SASL_SSF = 7
 
 SCHEMA_NC = "CN=Schema,CN=Configuration,DC=example,DC=com"
 
@@ -41,6 +42,10 @@ class StubConnection:
     def set_option(self, option: int, value: object) -> None:
         return None
 
+    # Reports an encrypted session.
+    def get_option(self, option: int) -> object:
+        return 256
+
     # Accepts the bind: the stub has no ticket to check.
     def sasl_interactive_bind_s(self, who: str, auth: object) -> None:
         return None
@@ -49,8 +54,9 @@ class StubConnection:
     # shapes a directory answers with: bytes, an objectClass hierarchy, a
     # non-ASCII value, one memberOf, and the server echoed back so composition
     # can see -Server arrive.
-    def search_ext_s(self, base: str, scope: int, filterstr: str,
-                     attrlist: list[str] | None) -> list[tuple[str, dict[str, list[bytes]]]]:
+    def search_ext_s(self, base: str, scope: int, filterstr: str, attrlist: list[str] | None,
+                     serverctrls: list[object] | None = None,
+                     ) -> list[tuple[str, dict[str, list[bytes]]]]:
         if base == "":
             return [("", {"schemaNamingContext": [SCHEMA_NC.encode()],
                          "defaultNamingContext": [b"DC=example,DC=com"]})]

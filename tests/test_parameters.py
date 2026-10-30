@@ -44,6 +44,7 @@ def test_the_endpoint_is_read_from_server(server: str,
 @pytest.mark.parametrize("server", [
     "dc1\x00.example.com", "dc1.example.com\x1b", "dc\n1", "a b", "dc1 ldap://evil", "dc1/x",
     "dc%41", 'dc"1', "dc1.example.com:notaport", "dc1.example.com:70000", ":389",
+    ".example.com", "a..b", "a" * 64 + ".example.com",
 ])
 def test_what_is_not_a_host_name_is_refused(server: str) -> None:
     with pytest.raises(BackendError) as raised:

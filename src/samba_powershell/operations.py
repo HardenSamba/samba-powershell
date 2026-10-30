@@ -37,8 +37,8 @@ def get_object(request: dict[str, object], client_factory: ClientFactory,
 
 
 # Resolves, reads, guards and renders one object on an open directory session.
-# The schema is consulted only for the properties named, or for everything
-# under -Properties *, so a read of the default set costs one exchange.
+# The schema's syntax is consulted only for the properties named, or for
+# everything under -Properties *.
 def read(directory: DirectoryClient, identity: str, spec: ClassSpec,
          extras: list[str]) -> dict[str, object]:
     extras = [name for name in extras if name.lower() not in render.own_names(spec)]

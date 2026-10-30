@@ -14,8 +14,8 @@ PowerShell itself is not in the official Debian stable archive. It remains a
 hard dependency because the module has no useful cmdlet surface without it.
 The conflict between that fact and contracts 7.2 and 11.3 is tracked in
 [hardensamba-modulekit#6](https://github.com/HardenSamba/hardensamba-modulekit/issues/6).
-The package release remains blocked by that decision; this repository does not
-silently weaken the relationship to `Recommends`.
+That question stays open, and this repository publishes its own archive meanwhile;
+it does not silently weaken the relationship to `Recommends`.
 
 The backend reads through `python3-ldap`, a Debian stable package, imported only
 when a command reaches the network. LDAP, SASL and Kerberos stay in that library
@@ -24,10 +24,12 @@ and the system libraries under it; `ldap_session.py` opens the session and
 backend reads through.
 
 The session binds with SASL GSSAPI and requires a security strength of 56, which
-means encrypted: a bind that cannot reach it fails rather than continuing in
-clear. Referrals are not chased, since following one would bind to a server the
-caller did not name, and the Kerberos service is `ldap/<the name given>`, without
-reverse DNS. Binding as the caller means the directory applies that principal's
+means encrypted: the strength is read back after the bind, and a session weaker
+than that is refused rather than continuing in clear, whatever an `ldaprc` file
+asked for. Referrals are not chased, since following one would bind to a server
+the caller did not name. The Kerberos service is `ldap/<name>`; the LDAP library
+leaves the name as given, and `krb5.conf` decides whether Kerberos canonicalizes
+it. Binding as the caller means the directory applies that principal's
 ACLs to every read, attribute by attribute. No live allow/deny test of that has
 been recorded yet, and write cmdlets remain blocked until it has.
 

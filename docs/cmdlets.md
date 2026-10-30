@@ -151,8 +151,8 @@ way.
 
 ## Value conversions
 
-The endpoint carries every value as text or as base64. What an attribute holds
-is decided by its syntax in the schema, which the backend reads for every
+LDAP answers every value in bytes. What an attribute holds is decided by its
+syntax in the schema, which the backend reads for every
 property asked for by name, in one search of the schema naming context.
 
 | Attribute kind | Stored as | Returned as |
@@ -239,7 +239,7 @@ every such name, the way Windows refuses it, rather than returning an object tha
 silently lacks it. A name that cannot be an attribute at all is refused before
 anything travels: several names in one string (`'mail,memberOf'` rather than
 `mail,memberOf`), or an attribute option such as `member;range=0-99`, which the
-endpoint does not carry. Windows extended property names that are not
+cmdlets do not read. Windows extended property names that are not
 attributes, such as `EmailAddress` or `LastLogonDate`, are refused the same way;
 ask for the attribute behind them. The cmdlet's own property names that are not
 attributes — `SID`, `Surname`, `Enabled`, `GroupCategory`, `GroupScope` — are
@@ -249,12 +249,16 @@ Windows; leave the parameter out instead.
 
 `-Properties *` reads the whole object and shows every attribute it stores,
 the derivation sources included. Constructed attributes such as `tokenGroups`
-and `canonicalName`, which the server computes on read, and the reference
-attributes the endpoint adds of its own, do not appear under `-Properties *`;
+and `canonicalName`, which the server computes on read, do not appear under
+`-Properties *`;
 name one beside the wildcard — `-Properties *,canonicalName` — to have it. A
 named attribute the whole-object read did not return, such as
 `msDS-KeyVersionNumber`, which the server computes only when named, is read
 again in a second, projected exchange.
+
+`nTSecurityDescriptor` is read as its owner, group and DACL, so a caller who may
+not read the SACL still gets it, as base64, under the wildcard too. A caller who
+may read the SACL does not get it here.
 
 A read asks the schema which attributes are binary, once per call. Naming
 properties, or the wildcard, adds a schema search for their syntax; an
@@ -263,8 +267,9 @@ account-name identity adds a search of its own.
 ## Servers and failures
 
 `-Server` names the domain controller by its DNS host name. The session
-authenticates with Kerberos as the service `ldap/<name>`, so an IP address or an
-alias has no principal to authenticate against. `host:port` reaches LDAP on
+authenticates with Kerberos as the service `ldap/<name>`, and an IP address or an
+alias usually has no such principal, though `krb5.conf` may let Kerberos resolve
+one to the controller's name. `host:port` reaches LDAP on
 another port than 389. A value of only whitespace is no server, and fails like
 an absent one with `SambaAD.ServerRequired`.
 
@@ -284,11 +289,13 @@ named:
 | `AuthenticationError` | the session could not be encrypted | the cmdlets refuse to read without it |
 | `ConnectionError` | the name does not resolve | check `-Server` |
 | `ConnectionError` | nothing listens on the port | check the port, or whether the controller runs |
-| `OperationTimeout` | no answer within 30 seconds | |
+| `OperationTimeout` | the controller cannot be connected to, about 20 seconds | |
+| `OperationTimeout` | connected, but no answer to one exchange within 30 seconds | |
 
 A system without `python3-ldap` reports `SambaAD.ClientUnavailable`, naming the
 packages to install. What the directory refuses is reported against the identity:
-`SambaAD.AccessDenied` and `SambaAD.InvalidIdentity`.
+`SambaAD.AccessDenied` and `SambaAD.InvalidIdentity`. Any other LDAP failure
+keeps its wording under `SambaAD.ClientFailure`.
 
 A backend that is missing, a dangling link, or one the calling user cannot
 execute reports `SambaAD.BackendUnavailable`, and one that answers outside the
@@ -313,7 +320,7 @@ of ticket #3.
 - `-SearchBase` and `-SearchScope`
 - `-ResultPageSize`, and therefore paged results
 
-Paging goes through WS-Enumeration `Pull` carrying the LDAP paging control,
-specified in MS-WSPELD. A default page size that silently truncates is the
+Paging will use the simple paged results control of RFC 2696, as the account-name
+lookup does. A default page size that silently truncates is the
 classic failure here and it looks like success, so the count must be checked
 against the same query run through `ldbsearch` before paging is claimed.

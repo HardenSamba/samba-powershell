@@ -13,7 +13,7 @@ to install it each way, and what the package and CI check.
 | Python 3.11 or later | Debian |
 | PowerShell 7.4 or later, package `powershell` | Microsoft's APT repository, see below |
 | `python3-ldap`, `libsasl2-modules-gssapi-mit` | Debian |
-| `krb5-user`, for `kinit` | Debian, recommended by the package |
+| `krb5-user`, for `kinit` | Debian; the package recommends it, every other way must install it |
 | A reachable Samba AD domain controller, TCP 389 | the domain |
 
 ## PowerShell is not in Debian stable
@@ -29,7 +29,8 @@ third-party repository. A `Recommends` would let the package install without
 the only host its module has, and leave a system that looks installed and cannot
 run a single cmdlet. Microsoft publishes PowerShell for Debian in its own
 repository, set up by the package it ships for that purpose. A default Debian
-install has neither `curl` nor the CA certificates, so they come first:
+install has neither `curl` nor the CA certificates, so they come first. On a system
+without `sudo`, run these as root and drop it:
 
 ```bash
 sudo apt install ca-certificates curl
@@ -101,13 +102,16 @@ and has no conffile to register.
 
 ## Installing the package
 
+**Not published yet:** the archive goes live with the first release, which needs
+the owner's signing key. Until then use `install.sh` or a package built by hand.
+
 The archive is signed and served from the `gh-pages` branch of this repository,
 through GitHub Pages. With PowerShell's repository added as above, add it once
 and install; apt pulls in PowerShell, `python3-ldap` and the SASL plugin:
 
 ```bash
-sudo curl -fsSLo /usr/share/keyrings/hardensamba-samba-powershell.gpg \
-  https://hardensamba.github.io/samba-powershell/hardensamba-samba-powershell.gpg
+curl -fsSL https://hardensamba.github.io/samba-powershell/hardensamba-samba-powershell.gpg \
+  | sudo install -m 0644 /dev/stdin /usr/share/keyrings/hardensamba-samba-powershell.gpg
 echo "deb [signed-by=/usr/share/keyrings/hardensamba-samba-powershell.gpg] https://hardensamba.github.io/samba-powershell $(. /etc/os-release; echo "$VERSION_CODENAME") main" \
   | sudo tee /etc/apt/sources.list.d/samba-powershell.list
 sudo apt update
@@ -127,7 +131,28 @@ Get-Module -ListAvailable SambaAD # ModuleBase: /usr/local/share/powershell/Modu
 
 `sudo apt purge samba-powershell` removes everything, the link included.
 
+## First use
+
+The cmdlets need three things from the machine they run on, none of which the
+packages can set up:
+
+- **Kerberos configuration.** `krb5-user` asks for the realm and the KDC when it
+  installs, unless the installation is noninteractive; otherwise write
+  `/etc/krb5.conf` yourself.
+- **DNS.** The controller's DNS host name must resolve, and clocks must be within
+  Kerberos's tolerance, five minutes by default.
+- **A ticket.** `kinit user@REALM`, then give the controller's name with `-Server`
+  or `SAMBA_AD_SERVER`.
+
+A name other than the controller's own works only as far as `krb5.conf` lets it:
+Kerberos may canonicalize an alias or an address it can resolve in reverse. Use
+the DNS host name; `dns_canonicalize_hostname = false` with `rdns = false` makes
+the given name authoritative.
+
 ## Installing from the PowerShell Gallery
+
+**Not published yet:** the module reaches the gallery with the first release made
+with the owner's gallery API key.
 
 ```powershell
 Install-Module SambaAD
@@ -138,9 +163,11 @@ Import-Module SambaAD
 the gallery holds its backend inside it, under `backend/`, and runs it through
 `/usr/bin/python3`, since unpacking drops execute bits.
 `tools/build_gallery_module.sh` stages that folder. A gallery cannot install a
-Debian package, so `python3-ldap` and `libsasl2-modules-gssapi-mit` must be
-installed first, which contract rule 7.2 requires anyway; a cmdlet names them
-when they are missing, with `SambaAD.ClientUnavailable`.
+Debian package, so `python3-ldap`, `libsasl2-modules-gssapi-mit` and `krb5-user`
+must be installed first, which contract rule 7.2 requires anyway; a cmdlet names
+the first two when they are missing, with `SambaAD.ClientUnavailable`. On a system
+without Python at all the same check reports `SambaAD.BackendUnavailable`, naming
+the interpreter; installing `python3-ldap` brings it.
 
 Use the package or the gallery on one system, not both. `Install-Module` declines
 to install beside the package without `-Force`, and with it a user's own copy
@@ -149,20 +176,23 @@ into files dpkg owns.
 
 ## Publishing a release
 
-Pushing a version tag runs `.github/workflows/release.yml`. It refuses a tag that
-disagrees with `debian/changelog`, builds and lints the package, adds it to the
+Pushing a version tag runs `.github/workflows/release.yml`, in this order: merge
+to the default branch, then tag. It refuses a tag that disagrees with any version
+in the tree, builds and lints the package, adds it to the
 pool on the `gh-pages` branch, regenerates and signs the indexes with
 `tools/apt_publish.sh`, verifies them with the public key alone, and pushes the
 branch. A version already published keeps its bytes. It then publishes the module
 to the gallery.
 
-It reads two secrets, which belong to whoever owns the archive and are never made
-by the workflow:
+It reads two secrets of the `release` environment, which belong to whoever owns
+the archive and are never made by the workflow. That environment serves version
+tags only and waits for the owner's approval of each job, so a writer of the
+repository can neither read a key from a workflow of their own nor publish alone:
 
 | Secret | What | How |
 |---|---|---|
-| `APT_SIGNING_KEY` | the private key that signs the archive; required | `sh tools/make_apt_signing_key.sh` makes it, stores it and starts the release |
-| `PSGALLERY_API_KEY` | an API key of a gallery account; without it the gallery is skipped with a notice | `gh secret set PSGALLERY_API_KEY --repo HardenSamba/samba-powershell` |
+| `APT_SIGNING_KEY` | the private key that signs the archive; required | `sh tools/make_apt_signing_key.sh`, once the workflow is on the default branch, makes the environment and the key and starts the release |
+| `PSGALLERY_API_KEY` | an API key of a gallery account; without it the gallery is skipped with a notice | `gh secret set PSGALLERY_API_KEY --repo HardenSamba/samba-powershell --env release` |
 
 The ecosystem's own archive is `hardensamba-apt`, whose pipeline has no origin
 yet and calls choosing one a decision for its owner. This archive uses the layout
@@ -236,9 +266,9 @@ module, which `install.sh --uninstall` reminds you of.
 ## What CI checks
 
 The `package` job of `.github/workflows/ci.yml` runs on every push to `main` and
-every pull request, and fails when any step fails. It runs two `debian:stable`
-containers in turn over the checkout, so the install test starts from a system
-that never saw a build tool, without passing files between jobs.
+every pull request, and fails when any step fails. It runs `debian:stable`
+containers in turn over the checkout, so each test starts from a system that never
+saw a build tool, without passing files between jobs.
 
 `tests/package/ci_build.sh`, in the first container, builds and lints:
 

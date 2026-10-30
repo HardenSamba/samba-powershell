@@ -115,6 +115,8 @@ $schema = "CN=User,CN=Schema,CN=Configuration,$domain"
 $class = Get-ADObject $schema -Server $Server -Properties objectClassCategory, schemaIDGUID, *
 Assert-Live 'schema object integer' ($class.objectClassCategory -is [long] -or $class.objectClassCategory -is [int]) "got $($class.objectClassCategory)"
 Assert-Live 'unknown binary is base64' ($class.schemaIDGUID -match '^[A-Za-z0-9+/]+=*$') "got $($class.schemaIDGUID)"
+$secured = Get-ADObject $domain -Server $Server -Properties nTSecurityDescriptor
+Assert-Live 'security descriptor without SACL rights' ($secured.nTSecurityDescriptor -match '^[A-Za-z0-9+/]+=*$') "got $($secured.nTSecurityDescriptor)"
 
 
 $missing = "CN=Nobody Here,CN=Users,$domain"

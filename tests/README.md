@@ -37,6 +37,9 @@ chmod 0700 /tmp/samba-ad-backend
 ```
 
 It checks identities in every form, value types, constructed and binary
-attributes, the wildcard, groups, computers, the schema, and every failure a
-caller can meet, including no ticket. It does not replace the offline
+attributes, the wildcard, groups, computers, the schema, and the failures a domain
+can produce on demand: a missing object, a wrong class, an unknown property, no
+server, a closed port, an unknown host and no ticket. Timeouts, refusals by the
+directory, a session too weak and a missing library are covered only offline. It
+does not replace the offline
 boundary test.
