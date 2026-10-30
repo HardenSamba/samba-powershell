@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  pages: write
 
 # One publish at a time: two would each read the branch and lose a package.
 concurrency:
@@ -26,7 +27,7 @@ jobs:
       - name: Install the archive tooling
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends apt-utils ca-certificates git gnupg gpgv
+          apt-get install -y --no-install-recommends apt-utils ca-certificates curl git gnupg gpgv
 
       - uses: actions/checkout@v4
 
@@ -111,6 +112,14 @@ jobs:
           fi
           git commit -m "Publish samba-powershell $GITHUB_REF_NAME"
           git push origin gh-pages
+
+      # A push made with the workflow's own token is not guaranteed to start a
+      # Pages build, and an archive that is pushed but not served helps nobody.
+      - name: Ask Pages to serve it
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $GITHUB_TOKEN"             -H 'Accept: application/vnd.github+json'             "https://api.github.com/repos/$GITHUB_REPOSITORY/pages/builds"
 
       - name: Destroy the ephemeral GNUPGHOME
         if: always()
