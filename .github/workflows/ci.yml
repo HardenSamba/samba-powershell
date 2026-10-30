@@ -54,3 +54,16 @@ jobs:
       - name: Measure PowerShell to Python transports
         shell: pwsh
         run: ./benchmarks/transport.ps1 -PythonPath (Get-Command python3).Source
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and lint in debian:stable
+        run: docker run --rm -v "$PWD:/src" -w /src debian:stable sh tests/package/ci_build.sh
+      - name: Install and exercise in a fresh debian:stable, by the documented steps
+        run: docker run --rm -v "$PWD:/src" -w /src debian:stable sh tests/package/ci_install.sh
+      - name: Install from a signed archive in a fresh debian:stable, through apt alone
+        run: docker run --rm -v "$PWD:/src" -w /src debian:stable sh tests/package/test_apt_archive.sh
+      - name: Read a real domain with no samba-adws anywhere
+        run: docker run --rm --privileged --hostname dc1 -v "$PWD:/src" -w /src debian:stable sh tests/package/ci_live.sh

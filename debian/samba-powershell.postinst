@@ -1,0 +1,30 @@
+#!/bin/sh
+# Links the SambaAD module into /usr/local/share/powershell/Modules, the
+# all-users module path every pwsh searches. Debian Policy 9.1.2 keeps packages
+# from placing files under /usr/local even from maintainer scripts; this link
+# is a deliberate exception, recorded in docs/packaging.md, and the only one.
+# postrm removes it. Anything an administrator put there, a manual installation
+# or a link of their own, is left alone and reported.
+set -e
+
+LINK=/usr/local/share/powershell/Modules/SambaAD
+TARGET=/usr/share/samba-powershell/Modules/SambaAD
+
+case "$1" in
+    configure)
+        if [ -L "$LINK" ] && [ "$(readlink "$LINK")" != "$TARGET" ]; then
+            echo "samba-powershell: $LINK links elsewhere and was left as it is." >&2
+        elif [ -e "$LINK" ] && [ ! -L "$LINK" ]; then
+            echo "samba-powershell: $LINK is not a link and was left as it is." >&2
+            echo "samba-powershell: run 'sh install.sh --uninstall', then" \
+                "'dpkg-reconfigure samba-powershell', to use the packaged module." >&2
+        else
+            (umask 022 && mkdir -p /usr/local/share/powershell/Modules)
+            ln -sfn "$TARGET" "$LINK"
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

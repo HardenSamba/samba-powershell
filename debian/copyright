@@ -1,12 +1,113 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: samba-powershell
+Upstream-Contact: CaracalC <martin.ptit@gmail.com>
 Source: https://github.com/HardenSamba/samba-powershell
-Comment:
- The definitive licence is tracked by
- https://github.com/HardenSamba/hardensamba-modulekit/issues/5.
- This placeholder is packaging metadata, not a licence grant.
 
 Files: *
-Copyright: 2026 HardenSamba contributors
-License: TO-BE-DECIDED-IN-ISSUE-5
- The licence text will be added when issue #5 is resolved.
+Copyright: 2026 HardenSamba
+License: HardenSamba-Proprietary-1.0
+
+License: HardenSamba-Proprietary-1.0
+ HARDENSAMBA PROPRIETARY SOFTWARE LICENSE
+ Version 1.0 — 2026
+ .
+ Copyright © 2026 HardenSamba.
+ All rights reserved.
+ .
+ 1. OWNERSHIP
+ .
+ This repository and all software, source code, documentation,
+ configuration files, assets, and other materials contained herein
+ (collectively, the "Software") are proprietary and confidential
+ materials of HardenSamba.
+ .
+ All rights, title, and interest in the Software are reserved by
+ HardenSamba, subject to any rights that may be held by individual
+ authors or other rights holders under applicable law.
+ .
+ 2. NO LICENSE
+ .
+ Access to this repository does not grant any ownership rights,
+ copyright rights, license, or other intellectual property rights
+ in or to the Software.
+ .
+ No license is granted except where expressly authorized in writing
+ by HardenSamba.
+ .
+ 3. RESTRICTIONS
+ .
+ Without prior written authorization from HardenSamba, you may not:
+ .
+ (a) use the Software or any part thereof;
+ .
+ (b) copy, reproduce, or redistribute the Software;
+ .
+ (c) modify, adapt, translate, or create derivative works;
+ .
+ (d) fork, mirror, publish, or otherwise make the Software available
+     to any third party;
+ .
+ (e) incorporate any portion of the Software into another software,
+     operating system, product, or service;
+ .
+ (f) use the Software to develop or assist in developing a competing
+     product, operating system, or project;
+ .
+ (g) release the Software or any derivative work under an open-source
+     or otherwise permissive license;
+ .
+ (h) sell, sublicense, lease, rent, or commercially exploit the
+     Software;
+ .
+ (i) remove or alter proprietary, copyright, license, or attribution
+     notices.
+ .
+ 4. REPOSITORY ACCESS
+ .
+ Access granted through GitHub or any other platform is provided
+ solely for authorized development, review, testing, or other
+ purposes expressly permitted by HardenSamba.
+ .
+ Repository permissions, including Read, Write, Maintain, or
+ Administrator access, do not grant ownership of the Software.
+ .
+ HardenSamba may revoke repository access at any time.
+ .
+ 5. CONTRIBUTIONS
+ .
+ Unless a separate written agreement expressly provides otherwise,
+ contributing to this repository does not grant the contributor any
+ right to use, distribute, publish, fork, commercialize, or otherwise
+ exploit the Software outside the scope expressly authorized by
+ HardenSamba.
+ .
+ 6. CONFIDENTIALITY
+ .
+ Non-public source code and materials contained in this repository
+ may constitute confidential information and/or trade secrets.
+ .
+ Authorized users must not disclose or provide such materials to
+ unauthorized third parties.
+ .
+ 7. TERMINATION
+ .
+ Any authorization granted by HardenSamba may be terminated at any
+ time upon violation of its terms.
+ .
+ Upon termination, all unauthorized use of the Software must cease.
+ .
+ 8. DISCLAIMER
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", TO THE MAXIMUM EXTENT PERMITTED
+ BY APPLICABLE LAW.
+ .
+ 9. RESERVATION OF RIGHTS
+ .
+ All rights not expressly granted in writing are reserved.
+ .
+ Unauthorized use, reproduction, modification, distribution,
+ publication, or creation of derivative works may constitute
+ copyright infringement and/or other violations of applicable law.
+ .
+ HardenSamba reserves the right to enforce its intellectual property
+ rights to the fullest extent permitted by applicable law.

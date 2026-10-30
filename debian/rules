@@ -1,6 +1,30 @@
 #!/usr/bin/make -f
 
-export PYBUILD_NAME=$(shell dh_listpackages)
+# The importable Python package's name, which here only names pybuild's build
+# directory, and the build system, which pybuild does not always detect from
+# pyproject.toml alone.
+export PYBUILD_NAME = samba_powershell
+export PYBUILD_SYSTEM = pyproject
+
+MODULE_DIR = debian/samba-powershell/usr/share/samba-powershell/Modules/SambaAD
+MODULE_FILES = SambaAD.psd1 SambaAD.psm1 SambaAD.Format.ps1xml
 
 %:
 	dh $@ --with python3 --buildsystem=pybuild
+
+# pybuild ships the Python backend and the samba-ad-backend console script; the
+# PowerShell module is not Python and is placed here, file by file and with its
+# mode stated, under the directory postinst links into PSModulePath.
+override_dh_auto_install:
+	dh_auto_install
+	install -d $(MODULE_DIR)
+	for file in $(MODULE_FILES); do \
+		install -m 0644 powershell/SambaAD/$$file $(MODULE_DIR)/$$file || exit 1; \
+	done
+
+# The repository's own test suite, the same command CI runs, rather than
+# pybuild's guess at one.
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	PYTHONPATH=src python3 -m pytest tests -q -p no:cacheprovider
+endif

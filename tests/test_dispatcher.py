@@ -104,7 +104,7 @@ def test_get_ad_object_takes_any_class() -> None:
     assert client.requested == ["distinguishedName", "name", "objectClass", "objectGUID"]
 
 
-# Missing endpoints fail before the optional samba-adws import is needed.
+# Missing endpoints fail before the LDAP library is needed.
 def test_get_ad_user_requires_server(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SAMBA_AD_SERVER", raising=False)
     request = request_for("get_ad_user", ALICE_DN)

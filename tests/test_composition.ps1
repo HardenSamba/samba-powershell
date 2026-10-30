@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$stub = Join-Path $PSScriptRoot 'fixtures/stub_adws'
+$stub = Join-Path $PSScriptRoot 'fixtures/stub_ldap'
 $source = Join-Path $repoRoot 'src'
 $separator = [System.IO.Path]::PathSeparator
 $temporary = Join-Path ([System.IO.Path]::GetTempPath()) (
@@ -32,7 +32,7 @@ try {
         $separator + $env:PSModulePath
     )
     $user = Get-ADUser -Identity 'CN=Alice,DC=example,DC=com' -Server dc1 `
-        -Properties adwsServer, userAccountControl, memberOf
+        -Properties stubServer, userAccountControl, memberOf
     if ($user.PSObject.TypeNames[0] -ne 'SambaAD.User') {
         throw 'The real backend did not return a SambaAD.User object.'
     }
@@ -42,7 +42,7 @@ try {
     if ($user.Name -ne [char]0x41 + 'nn' + [char]0xE9 + 'e') {
         throw "The UTF-8 boundary corrupted a non-ASCII value: $($user.Name)"
     }
-    if ($user.adwsServer -ne 'dc1') {
+    if ($user.stubServer -ne 'dc1') {
         throw 'The real backend did not pass -Server through to the client.'
     }
     if ($user.Enabled -ne $true) {

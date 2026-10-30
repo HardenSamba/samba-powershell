@@ -22,9 +22,11 @@ In scope:
 - Shell integration and tab completion
 
 Out of scope:
-- Reimplementing the wire protocol, which belongs to `samba-adws`
+- Reimplementing LDAP, SASL or Kerberos, which come from `python3-ldap` and the
+  system libraries
 
-Declared module dependencies: `samba-adws`.
+Declared module dependencies: none. The module talks to the directory over LDAP
+and needs nothing on a domain controller but Samba itself.
 
 ## 4. Non-negotiable rules
 
