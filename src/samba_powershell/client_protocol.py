@@ -7,8 +7,8 @@ from typing import Protocol
 
 
 # The three directory questions the read cmdlets ask, in this module's terms
-# rather than samba-adws's: read one object, name a naming context, and run a
-# bounded search. The adapter over samba-adws and the offline fakes both meet it.
+# rather than a library's: read one object, name a naming context, and run a
+# bounded search. The adapter over LDAP and the offline fakes both meet it.
 class DirectoryClient(Protocol):
     # Retrieves one object by distinguished name or extended reference; an
     # empty projection asks for every attribute the object holds.

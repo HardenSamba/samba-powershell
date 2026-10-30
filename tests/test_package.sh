@@ -1,8 +1,8 @@
 #!/bin/sh
 #
 # Installs, exercises and removes samba-powershell the documented ways, as
-# root, on a disposable Debian system that has PowerShell, samba-adws (or its
-# stand-in) and python3-yaml installed and no samba-powershell:
+# root, on a disposable Debian system that has PowerShell, python3-ldap,
+# libsasl2-modules-gssapi-mit and python3-yaml installed and no samba-powershell:
 #
 #   sh tests/test_package.sh deb ../samba-powershell_0.1.0-1_all.deb
 #   sh tests/test_package.sh coexist ../samba-powershell_0.1.0-1_all.deb
@@ -45,10 +45,10 @@ added_since() {
     snapshot | LC_ALL=C comm -13 "$1" -
 }
 
-# The id the backend's first refusal carries: with the samba-adws client
-# present it asks for a server, with the stand-in it reports the client missing.
+# The id the backend's first refusal carries: with the LDAP library present it
+# asks for a server, without it, it reports the library missing.
 expected_error() {
-    if python3 -c 'import samba_adws.search_client' >/dev/null 2>&1; then
+    if python3 -c 'import ldap' >/dev/null 2>&1; then
         echo SambaAD.ServerRequired
     else
         echo SambaAD.ClientUnavailable
@@ -85,8 +85,12 @@ assert_restored() {
 check_relationships() {
     depends=$(dpkg-deb -f "$1" Depends)
     echo "$depends" | grep -Eq '(^|, )powershell($|,| )' || fail "Depends lacks powershell: $depends"
-    echo "$depends" | grep -q 'samba-adws (>= 1.0.0)' \
-        || fail "Depends lacks samba-adws (>= 1.0.0): $depends"
+    for package in python3-ldap libsasl2-modules-gssapi-mit; do
+        echo "$depends" | grep -q "$package" || fail "Depends lacks $package: $depends"
+    done
+    if echo "$depends" | grep -q samba-adws; then
+        fail "Depends still names samba-adws: $depends"
+    fi
 }
 
 install_deb() {

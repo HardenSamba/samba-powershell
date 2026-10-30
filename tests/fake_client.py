@@ -118,15 +118,12 @@ SCHEMA = {
 }
 
 
-# Mirrors the typed failure the supported client raises for a missing object.
+# Mirrors the failure python-ldap raises for a missing object: everything it
+# says arrives as a dictionary in the first argument.
 class FakeNotFound(RuntimeError):
-    # Carries the stable fields the backend maps onto an ErrorRecord.
+    # Carries the fields the backend maps onto an ErrorRecord.
     def __init__(self, identity: str) -> None:
-        super().__init__(f"Object not found: {identity}")
-        self.message = f"Object not found: {identity}"
-        self.code = "ObjectNotFound"
-        self.category = "ObjectNotFound"
-        self.target = identity
+        super().__init__({"result": 32, "desc": "No such object", "info": identity})
 
 
 # The record an identity names: by distinguished name, or by the extended

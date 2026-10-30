@@ -30,8 +30,8 @@ MODULES=/usr/local/share/powershell/Modules
 MODULE=$MODULES/SambaAD
 PACKAGE_MODULE=/usr/share/samba-powershell/Modules/SambaAD
 MODULE_FILES="SambaAD.psd1 SambaAD.psm1 SambaAD.Format.ps1xml"
-# The interpreter the Debian packages of samba-adws and samba install for;
-# another python3 earlier on PATH would not find their modules.
+# The interpreter the Debian package of python-ldap installs for; another
+# python3 earlier on PATH would not find it.
 PYTHON=/usr/bin/python3
 
 fail() {
@@ -108,8 +108,8 @@ verify() {
     else
         warn "pwsh is not installed; the module needs PowerShell 7.4 or later, see docs/packaging.md"
     fi
-    if ! "$PYTHON" -c 'import samba_adws.search_client' >/dev/null 2>&1; then
-        warn "the samba-adws client is not installed; the cmdlets need samba-adws 1.0.0 or later"
+    if ! "$PYTHON" -c 'import ldap' >/dev/null 2>&1; then
+        warn "python-ldap is not installed; the cmdlets need the Debian packages python3-ldap and libsasl2-modules-gssapi-mit"
     fi
 }
 

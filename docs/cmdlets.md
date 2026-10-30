@@ -38,8 +38,7 @@ Get-ADGroup 'Domain Admins' -Properties member |
 A returned object converts to its distinguished name as a string, as a Windows
 `ADObject` does, so `"$user"` is the DN.
 
-Each object costs one backend process and at least one ADWS exchange, about
-0.4 s on a controller on the local network, so a long pipeline is paced by
+Each object costs one backend process and one LDAP session, so a long pipeline is paced by
 that rather than by PowerShell. Streaming several objects into `Format-Table`
 fixes its column widths from the first rows; collect the results or use
 `-AutoSize` when the widths matter.
@@ -152,8 +151,8 @@ way.
 
 ## Value conversions
 
-The endpoint carries every value as text or as base64. What an attribute holds
-is decided by its syntax in the schema, which the backend reads for every
+LDAP answers every value in bytes. What an attribute holds is decided by its
+syntax in the schema, which the backend reads for every
 property asked for by name, in one search of the schema naming context.
 
 | Attribute kind | Stored as | Returned as |
@@ -193,11 +192,6 @@ declares it multi-valued, but the directory keeps one value on the security
 principals it manages, and those cmdlets on Windows show it as text.
 `Get-ADObject` follows the schema for every object, users included, and returns
 it as a list.
-
-samba-adws 1.0.1 sends `objectClassCategory` of a `classSchema` object as a
-boolean, which loses its value: the schema says Integer, the answer is `true` or
-`false`, and the cmdlets pass that text through rather than invent a number. The
-defect is the server's, and belongs to samba-adws to fix.
 
 ## Default property sets
 
@@ -245,7 +239,7 @@ every such name, the way Windows refuses it, rather than returning an object tha
 silently lacks it. A name that cannot be an attribute at all is refused before
 anything travels: several names in one string (`'mail,memberOf'` rather than
 `mail,memberOf`), or an attribute option such as `member;range=0-99`, which the
-endpoint does not carry. Windows extended property names that are not
+cmdlets do not read. Windows extended property names that are not
 attributes, such as `EmailAddress` or `LastLogonDate`, are refused the same way;
 ask for the attribute behind them. The cmdlet's own property names that are not
 attributes — `SID`, `Surname`, `Enabled`, `GroupCategory`, `GroupScope` — are
@@ -255,31 +249,35 @@ Windows; leave the parameter out instead.
 
 `-Properties *` reads the whole object and shows every attribute it stores,
 the derivation sources included. Constructed attributes such as `tokenGroups`
-and `canonicalName`, which the server computes on read, and the reference
-attributes the endpoint adds of its own, do not appear under `-Properties *`;
+and `canonicalName`, which the server computes on read, do not appear under
+`-Properties *`;
 name one beside the wildcard — `-Properties *,canonicalName` — to have it. A
 named attribute the whole-object read did not return, such as
 `msDS-KeyVersionNumber`, which the server computes only when named, is read
 again in a second, projected exchange.
 
-The schema is consulted only when a property is named or under the wildcard, so
-a read of the default set costs one ADWS exchange. Naming properties adds a
-RootDSE read and a schema search; an account-name identity adds a RootDSE read
-and a search of its own.
+`nTSecurityDescriptor` is read as its owner, group and DACL, so a caller who may
+not read the SACL still gets it, as base64, under the wildcard too. A caller who
+may read the SACL does not get it here.
+
+A read asks the schema which attributes are binary, once per call. Naming
+properties, or the wildcard, adds a schema search for their syntax; an
+account-name identity adds a search of its own.
 
 ## Servers and failures
 
-`-Server` names the domain controller by its DNS host name. The transport
-authenticates with Kerberos as the service `host/<name>`, so an IP address or an
-alias has no principal to authenticate against. `host:port` reaches ADWS on
-another port than 9389. A value of only whitespace is no server, and fails like
+`-Server` names the domain controller by its DNS host name. The session
+authenticates with Kerberos as the service `ldap/<name>`, and an IP address or an
+alias usually has no such principal, though `krb5.conf` may let Kerberos resolve
+one to the controller's name. `host:port` reaches LDAP on
+another port than 389. A value of only whitespace is no server, and fails like
 an absent one with `SambaAD.ServerRequired`.
 
-A `-Server` holding a control character is refused with
+A `-Server` that is not a host name or `host:port` is refused with
 `SambaAD.InvalidParameter` before anything travels.
 
-A failure to reach or authenticate to the endpoint is reported against the
-server as the caller gave it, port included, under the client's code
+A failure to reach or authenticate to the controller is reported against the
+server as the caller gave it, port included, under
 `SambaAD.TransportError`, with a category saying what failed and the usual cause
 named:
 
@@ -287,9 +285,17 @@ named:
 |---|---|---|
 | `AuthenticationError` | no Kerberos ticket | run `kinit`, or set `KRB5CCNAME` |
 | `AuthenticationError` | no principal for the server name | use the DNS host name, not an IP or alias |
+| `AuthenticationError` | no Kerberos plugin for SASL | install `libsasl2-modules-gssapi-mit` |
+| `AuthenticationError` | the session could not be encrypted | the cmdlets refuse to read without it |
 | `ConnectionError` | the name does not resolve | check `-Server` |
-| `ConnectionError` | nothing listens on the port | check the port, or whether samba-adws runs |
-| `OperationTimeout` | no answer within 30 seconds | |
+| `ConnectionError` | nothing listens on the port | check the port, or whether the controller runs |
+| `OperationTimeout` | the controller cannot be connected to, about 20 seconds | |
+| `OperationTimeout` | connected, but no answer to one exchange within 30 seconds | |
+
+A system without `python3-ldap` reports `SambaAD.ClientUnavailable`, naming the
+packages to install. What the directory refuses is reported against the identity:
+`SambaAD.AccessDenied` and `SambaAD.InvalidIdentity`. Any other LDAP failure
+keeps its wording under `SambaAD.ClientFailure`.
 
 A backend that is missing, a dangling link, or one the calling user cannot
 execute reports `SambaAD.BackendUnavailable`, and one that answers outside the
@@ -306,15 +312,15 @@ PowerShell leaves its own record of the failed start beside it.
 
 ## Not supported yet
 
-These are parsed and translated, but no cmdlet accepts them yet. The
-`samba-adws` search client the account-name lookup uses can carry them; wiring
-them, with paging, is the next step of ticket #3.
+These are parsed and translated, but no cmdlet accepts them yet. The paged LDAP
+search the account-name lookup uses can carry them; wiring them is the next step
+of ticket #3.
 
 - `-Filter` and `-LDAPFilter`
 - `-SearchBase` and `-SearchScope`
 - `-ResultPageSize`, and therefore paged results
 
-Paging goes through WS-Enumeration `Pull` carrying the LDAP paging control,
-specified in MS-WSPELD. A default page size that silently truncates is the
+Paging will use the simple paged results control of RFC 2696, as the account-name
+lookup does. A default page size that silently truncates is the
 classic failure here and it looks like success, so the count must be checked
 against the same query run through `ldbsearch` before paging is claimed.

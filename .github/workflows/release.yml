@@ -1,0 +1,174 @@
+name: release
+
+# Publishes one tagged version: the Debian package into the signed APT archive
+# served from the gh-pages branch, and the module to the PowerShell Gallery. The
+# branch is the whole archive, so adding a package is a commit and rolling back
+# is reverting one. docs/packaging.md says what the two secrets are; they live in
+# the release environment, which serves version tags and waits for an approval, so
+# a writer of the repository can neither read them nor publish alone.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+
+# One publish at a time: two would each read the branch and lose a package.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  apt:
+    runs-on: ubuntu-latest
+    container: debian:stable
+    environment: release
+    steps:
+      - name: Install the archive tooling
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends apt-utils ca-certificates curl git gnupg gpgv
+
+      - uses: actions/checkout@v4
+
+      - name: Require a tag that agrees with every version in the tree
+        run: |
+          case "$GITHUB_REF" in
+            refs/tags/v*) ;;
+            *) echo "::error::run this on a version tag, not $GITHUB_REF"; exit 1 ;;
+          esac
+          for found in \
+            "debian/changelog=$(sed -n '1s/.*(\(.*\)-[^-]*).*/\1/p' debian/changelog)" \
+            "SambaAD.psd1=$(sed -n "s/.*ModuleVersion = '\(.*\)'.*/\1/p" powershell/SambaAD/SambaAD.psd1)" \
+            "pyproject.toml=$(sed -n 's/^version = "\(.*\)".*/\1/p' pyproject.toml)" \
+            "__init__.py=$(sed -n 's/^__version__ = "\(.*\)".*/\1/p' src/samba_powershell/__init__.py)" \
+            "MODULE.yaml=$(sed -n 's/^version: //p' MODULE.yaml)"; do
+            if [ "${found#*=}" != "${GITHUB_REF_NAME#v}" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match ${found%%=*}, ${found#*=}"
+              exit 1
+            fi
+          done
+
+      - name: Require the signing key
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: |
+          if [ -z "$APT_SIGNING_KEY" ]; then
+            echo "::error::APT_SIGNING_KEY is not set; run tools/make_apt_signing_key.sh"
+            exit 1
+          fi
+
+      - name: Build and lint the package
+        run: sh tests/package/ci_build.sh
+
+      - name: Check out the published archive
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: archive
+
+      # A version already published keeps its bytes: a second binary under one
+      # version is a Hash Sum mismatch on every client that cached the index.
+      - name: Place the package in the pool
+        run: |
+          mkdir -p archive/pool/main/s/samba-powershell
+          for deb in dist/samba-powershell_*_all.deb; do
+            target="archive/pool/main/s/samba-powershell/$(basename "$deb")"
+            if [ -f "$target" ]; then
+              echo "$(basename "$deb") is already published; keeping those bytes"
+            else
+              cp "$deb" "$target"
+            fi
+          done
+
+      # An ephemeral GNUPGHOME, destroyed below whatever happens. The key arrives
+      # on standard input, so it is never an argument.
+      - name: Sign the archive
+        env:
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+        run: |
+          GNUPGHOME=$(mktemp -d)
+          chmod 700 "$GNUPGHOME"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          export GNUPGHOME
+          printf '%s' "$APT_SIGNING_KEY" | gpg --batch --quiet --import
+          key=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ { print $10; exit }')
+          sh tools/apt_publish.sh "$PWD/archive" "$key"
+          gpg --export "$key" > archive/hardensamba-samba-powershell.gpg
+          touch archive/.nojekyll
+          cp tools/gallery/archive-index.html archive/index.html
+
+      - name: Verify what was signed, with the public key alone
+        run: |
+          for suite in bookworm trixie; do
+            gpgv --keyring "$PWD/archive/hardensamba-samba-powershell.gpg" \
+              "archive/dists/$suite/InRelease"
+          done
+
+      - name: Publish the archive
+        run: |
+          git config --global --add safe.directory "$PWD/archive"
+          cd archive
+          git config user.name CaracalC
+          git config user.email martin.ptit@gmail.com
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'nothing changed; not publishing'
+            exit 0
+          fi
+          git commit -m "Publish samba-powershell $GITHUB_REF_NAME"
+          git push origin gh-pages
+
+      # A push made with the workflow's own token is not guaranteed to start a
+      # Pages build, and an archive that is pushed but not served helps nobody.
+      - name: Ask Pages to serve it
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $GITHUB_TOKEN"             -H 'Accept: application/vnd.github+json'             "https://api.github.com/repos/$GITHUB_REPOSITORY/pages/builds"
+
+      - name: Destroy the ephemeral GNUPGHOME
+        if: always()
+        run: |
+          if [ -n "${GNUPGHOME:-}" ] && [ -d "$GNUPGHOME" ]; then
+            gpgconf --kill all || true
+            find "$GNUPGHOME" -type f -exec shred -u {} + 2>/dev/null || true
+            rm -rf "$GNUPGHOME"
+          fi
+
+  gallery:
+    needs: apt
+    runs-on: ubuntu-latest
+    container: debian:stable
+    environment: release
+    env:
+      PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PowerShell
+        if: env.PSGALLERY_API_KEY != ''
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl
+          . /etc/os-release
+          curl -fsSLo /tmp/packages-microsoft-prod.deb \
+            "https://packages.microsoft.com/config/debian/${VERSION_ID}/packages-microsoft-prod.deb"
+          dpkg -i /tmp/packages-microsoft-prod.deb
+          apt-get update
+          apt-get install -y --no-install-recommends powershell
+
+      - name: Publish the module
+        if: env.PSGALLERY_API_KEY != ''
+        shell: pwsh
+        run: |
+          sh tools/build_gallery_module.sh "$PWD/dist/gallery/SambaAD"
+          Publish-PSResource -Path dist/gallery/SambaAD -Repository PSGallery -ApiKey $env:PSGALLERY_API_KEY
+
+      - name: Say the gallery was skipped
+        if: env.PSGALLERY_API_KEY == ''
+        run: echo "::notice::PSGALLERY_API_KEY is not set; the module was not published to the gallery."

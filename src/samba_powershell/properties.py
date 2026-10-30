@@ -32,7 +32,7 @@ def requested_extras(parameters: dict[str, object]) -> list[str]:
 
 # Refuses a name no attribute can have, saying what is wrong with it. An
 # attribute option such as ;range= is refused outright: it changes what a read
-# returns, and the endpoint does not carry it.
+# returns, and the cmdlets do not read it.
 def checked_name(name: str) -> str:
     if name == WILDCARD or DISPLAY_NAME.fullmatch(name):
         return name
