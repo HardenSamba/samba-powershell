@@ -140,7 +140,7 @@ if (-not $IsLinux) {
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $source = Join-Path $repoRoot 'src'
-$stub = Join-Path $repoRoot 'tests/fixtures/stub_adws'
+$stub = Join-Path $repoRoot 'tests/fixtures/stub_ldap'
 $echoBackend = Join-Path $PSScriptRoot 'echo_backend.py'
 $temporary = Join-Path ([System.IO.Path]::GetTempPath()) (
     'samba-ad-benchmark-' + [System.Guid]::NewGuid().ToString('N')

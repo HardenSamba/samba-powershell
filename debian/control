@@ -14,15 +14,17 @@ Rules-Requires-Root: no
 
 Package: samba-powershell
 Architecture: all
-Depends: powershell,
-         samba-adws (>= 1.0.0),
+Depends: libsasl2-modules-gssapi-mit,
+         powershell,
+         python3-ldap,
          ${misc:Depends},
          ${python3:Depends}
+Recommends: krb5-user
 Description: PowerShell cmdlets for Samba Active Directory administration
  Provides the Active Directory cmdlets Windows administrators know, such as
  Get-ADUser, Get-ADComputer, Get-ADGroup and Get-ADObject, on Linux, so a Samba
  domain can be administered from a terminal without a Windows workstation.
  .
  The cmdlets are a PowerShell module backed by a Python process that reads the
- directory through the samba-adws Active Directory Web Services client, with the
- caller's Kerberos ticket.
+ directory over LDAP, encrypted and authenticated with the caller's Kerberos
+ ticket. Nothing but Samba's own LDAP server is needed on the domain controller.

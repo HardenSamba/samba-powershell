@@ -1,6 +1,6 @@
 name: samba-powershell
 summary: PowerShell on Linux for Samba Active Directory administration.
-version: 0.1.0
+version: 0.2.0
 language:
   primary: python
   exceptions:
@@ -12,12 +12,11 @@ installs_on:
 - workstation
 requires:
   samba_ad_domain: true
-  modules:
-  - name: samba-adws
-    strength: depends
-    reason: The cmdlets speak the web services protocol.
+  modules: []
   debian_packages:
   - powershell
+  - python3-ldap
+  - libsasl2-modules-gssapi-mit
 provides:
   commands:
   - samba-ad-backend

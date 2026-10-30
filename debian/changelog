@@ -1,3 +1,13 @@
+samba-powershell (0.2.0-1) unstable; urgency=medium
+
+  * Read the directory directly over LDAP with the caller's Kerberos ticket.
+    The package no longer depends on samba-adws, and a domain controller no
+    longer needs the ADWS service.
+  * Depend on python3-ldap and libsasl2-modules-gssapi-mit.
+  * -Server host names the LDAP port, 389, unless it says otherwise.
+
+ -- CaracalC <martin.ptit@gmail.com>  Fri, 30 Oct 2026 10:00:00 -0400
+
 samba-powershell (0.1.0-1) unstable; urgency=medium
 
   * Initial release: the SambaAD PowerShell module, with Get-ADUser,

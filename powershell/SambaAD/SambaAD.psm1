@@ -1,7 +1,15 @@
 Set-StrictMode -Version Latest
 
+# Install-Module copies the module folder and nothing else, so a module from the
+# gallery holds its backend beside itself, and runs it through the interpreter
+# the Debian Python packages install for, since unpacking drops execute bits.
+$script:BundledBackend = Join-Path $PSScriptRoot 'backend/samba_ad_backend.py'
+$script:BackendArguments = @()
 $script:BackendCommand = if ($env:SAMBA_POWERSHELL_BACKEND) {
     $env:SAMBA_POWERSHELL_BACKEND
+} elseif ([System.IO.File]::Exists($script:BundledBackend)) {
+    $script:BackendArguments = @('-B', $script:BundledBackend)
+    '/usr/bin/python3'
 } else {
     'samba-ad-backend'
 }
@@ -96,6 +104,9 @@ function Invoke-SambaADBackend {
     $script:RunnableBackend = $command.Source
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $command.Source
+    foreach ($argument in $script:BackendArguments) {
+        $startInfo.ArgumentList.Add($argument)
+    }
     $startInfo.ArgumentList.Add('request')
     $startInfo.UseShellExecute = $false
     $startInfo.RedirectStandardInput = $true
@@ -386,7 +397,7 @@ function Invoke-SambaADRead {
 }
 
 # Retrieves one user by distinguished name, GUID, SID or account name through
-# the Samba ADWS endpoint. A piped object binds by its DistinguishedName.
+# LDAP. A piped object binds by its DistinguishedName.
 function Get-ADUser {
     [CmdletBinding()]
     param(
@@ -436,7 +447,7 @@ function Get-ADComputer {
 }
 
 # Retrieves one group by distinguished name, GUID, SID or account name through
-# the Samba ADWS endpoint. A piped object binds by its DistinguishedName.
+# LDAP. A piped object binds by its DistinguishedName.
 function Get-ADGroup {
     [CmdletBinding()]
     param(

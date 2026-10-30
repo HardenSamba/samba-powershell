@@ -5,9 +5,10 @@
 This module runs on a plain Debian domain controller or workstation. Its
 Python backend may not use `pip` at installation or run time, and the
 PowerShell surface is the only language exception allowed by contract 7.5.
-The backend opens no Samba directory handle: it authenticates to `samba-adws`
-on TCP 9389 as the calling user through that user's Kerberos credential cache.
-It therefore neither imports `python3-samba` nor opens a `SamDB` locally.
+The backend opens no Samba directory handle: it binds to the domain controller's
+LDAP server, TCP 389, as the calling user through that user's Kerberos credential
+cache. It therefore neither imports `python3-samba` nor opens a `SamDB` locally,
+and needs no other service on the controller.
 
 PowerShell itself is not in the official Debian stable archive. It remains a
 hard dependency because the module has no useful cmdlet surface without it.
@@ -16,24 +17,27 @@ The conflict between that fact and contracts 7.2 and 11.3 is tracked in
 The package release remains blocked by that decision; this repository does not
 silently weaken the relationship to `Recommends`.
 
-The backend reads through the supported client API of the server module,
-delivered by [samba-adws#7](https://github.com/HardenSamba/samba-adws/issues/7):
-`samba_adws.ADWSSearchClient`, which reads one object, names a naming context
-and enumerates, with `samba_adws.search_query` to build a search. Both ship in
-every packaged samba-adws release, 1.0.0 onwards, and are imported only when a
-command reaches the network. Wire framing, WCF encoding and GSSAPI remain owned
-by that module rather than copied here. The samba-adws Debian package exists
-([samba-adws#6](https://github.com/HardenSamba/samba-adws/issues/6)), but the
-HardenSamba archive does not publish it yet, so the declared package dependency
-is satisfied by installing that package directly.
+The backend reads through `python3-ldap`, a Debian stable package, imported only
+when a command reaches the network. LDAP, SASL and Kerberos stay in that library
+and the system libraries under it; `ldap_session.py` opens the session and
+`ldap_directory.py` adapts it to the `DirectoryClient` protocol the rest of the
+backend reads through.
 
-The client preserves the caller's Kerberos cache, and samba-adws runs every
-request as the principal that authenticated it
-([samba-adws#8](https://github.com/HardenSamba/samba-adws/issues/8), fixed in
-samba-adws 1.0.0). Two limits remain on the server side. Reads are not filtered
-attribute by attribute ([samba-adws#17](https://github.com/HardenSamba/samba-adws/issues/17)),
-so a caller can read attributes its ACLs hide over LDAP, and no live allow/deny
-test of #8 has been recorded. Write cmdlets remain blocked until it has.
+The session binds with SASL GSSAPI and requires a security strength of 56, which
+means encrypted: a bind that cannot reach it fails rather than continuing in
+clear. Referrals are not chased, since following one would bind to a server the
+caller did not name, and the Kerberos service is `ldap/<the name given>`, without
+reverse DNS. Binding as the caller means the directory applies that principal's
+ACLs to every read, attribute by attribute. No live allow/deny test of that has
+been recorded yet, and write cmdlets remain blocked until it has.
+
+LDAP answers everything in bytes, and whether a value is text cannot be told by
+trying to decode it: the binary SID of `S-1-5-32-544` is valid UTF-8. One schema
+search per session lists the attributes whose syntax is binary (`2.5.5.10`,
+`2.5.5.15`, `2.5.5.17`), so an extended schema decodes correctly too. Searches
+use the simple paged results control, RFC 2696, and stop at the limit they were
+given. Values of an attribute a Windows controller truncates with `;range=` are
+not followed; Samba does not truncate them.
 
 ## Chosen process boundary
 
@@ -53,11 +57,10 @@ the process list.
 The initial version deliberately chooses one process per invocation. It has a
 measurable interpreter-start cost, but it has no daemon lifecycle, shared-user
 state, stale socket or credential-cache ambiguity. A single backend invocation
-may keep one ADWS connection for a multi-message operation such as
-Enumerate/Pull/Release. A read of the default set is one exchange; an
-account-name identity or named properties add a RootDSE read and one search
-each, every exchange its own connection, about 0.2 s apiece against a
-controller on the local network. The decision can be revisited only with
+holds one LDAP connection for all of its exchanges. A read costs the bind, a
+RootDSE read, the schema search for binary attributes and the read itself, about
+70 ms against a controller on the same host; an account-name identity or named
+properties add one search each. The decision can be revisited only with
 measurements and without changing the JSON envelopes.
 
 The rejected prototype is a process resident for the PowerShell session,
@@ -158,7 +161,7 @@ still leaves PowerShell's own record of the failed start.
 `benchmarks/transport.ps1` measures a real `Get-ADUser` call through the
 PowerShell module and a resident Python Unix-socket prototype, without
 directory or network work. The measured process is the shipped backend
-entry point, with only the ADWS client replaced by the offline stub, so the
+entry point, with only python-ldap replaced by the offline stub, so the
 interpreter start being timed includes the real package import rather than
 that of a bare fixture script. Run this exact command in a clean `debian:stable`
 environment after adding the PowerShell runtime described above:
@@ -189,13 +192,14 @@ substituted for the acceptance environment.
 | `powershell/SambaAD/SambaAD.psd1` | Module manifest and explicit exports |
 | `powershell/SambaAD/SambaAD.psm1` | Public cmdlets and private process bridge |
 | `powershell/SambaAD/SambaAD.Format.ps1xml` | Default typed-object formatting |
-| `src/samba_powershell/` | Typed backend protocol, dispatch and ADWS adapter |
+| `src/samba_powershell/` | Typed backend protocol, dispatch and LDAP adapter |
 | `tests/` | Offline Python and PowerShell boundary tests |
-| `tests/test_composition.ps1` | The module driving the real backend, ADWS client stubbed |
+| `tests/test_composition.ps1` | The module driving the real backend, python-ldap stubbed |
+| `tests/test_live.ps1` | The module, the backend and python-ldap against a real domain |
 | `benchmarks/transport.ps1` | PowerShell-to-Python acceptance measurements |
 | `benchmarks/transport.py` | Lower-level transport reproducibility check |
 
-On a lab workstation with a Kerberos ticket and samba-adws installed, the
+On a lab workstation with a Kerberos ticket and `python3-ldap` installed, the
 end-to-end check from a checkout is:
 
 ```powershell
@@ -206,5 +210,5 @@ Import-Module SambaAD
 Get-ADUser alice | Get-Member
 ```
 
-The offline test substitutes only the ADWS client boundary. A live run must be
+The offline test substitutes only the LDAP library boundary. A live run must be
 reported separately and is not implied by passing unit tests.

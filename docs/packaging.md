@@ -3,7 +3,7 @@
 The module is two halves that install to different places: a Python backend,
 which `pybuild` packages on its own, and the `SambaAD` PowerShell module, which
 `pybuild` never sees. This document records where each half goes and why, how
-to install it either way, and what the package and CI check.
+to install it each way, and what the package and CI check.
 
 ## Requirements
 
@@ -12,8 +12,9 @@ to install it either way, and what the package and CI check.
 | Debian 12 or later | the module targets Debian stable |
 | Python 3.11 or later | Debian |
 | PowerShell 7.4 or later, package `powershell` | Microsoft's APT repository, see below |
-| samba-adws 1.0.0 or later | the `samba-adws` repository's own package |
-| A reachable Samba AD domain controller running samba-adws | the domain |
+| `python3-ldap`, `libsasl2-modules-gssapi-mit` | Debian |
+| `krb5-user`, for `kinit` | Debian, recommended by the package |
+| A reachable Samba AD domain controller, TCP 389 | the domain |
 
 ## PowerShell is not in Debian stable
 
@@ -47,7 +48,7 @@ publishes with each PowerShell release installs the same package through
 
 On Ubuntu 24.04 or later, the first release with Python 3.11 or later, the
 repository package is under `config/ubuntu/${VERSION_ID}/` instead.
-`install.sh` supports it; the package and samba-adws have not been tried there.
+`install.sh` supports it; the package has not been tried there.
 
 ## Where the module goes
 
@@ -100,13 +101,24 @@ and has no conffile to register.
 
 ## Installing the package
 
-With PowerShell installed as above and the `samba-adws` package installed:
+The archive is signed and served from the `gh-pages` branch of this repository,
+through GitHub Pages. With PowerShell's repository added as above, add it once
+and install; apt pulls in PowerShell, `python3-ldap` and the SASL plugin:
 
 ```bash
-sudo apt install ./samba-powershell_0.1.0-1_all.deb
+sudo curl -fsSLo /usr/share/keyrings/hardensamba-samba-powershell.gpg \
+  https://hardensamba.github.io/samba-powershell/hardensamba-samba-powershell.gpg
+echo "deb [signed-by=/usr/share/keyrings/hardensamba-samba-powershell.gpg] https://hardensamba.github.io/samba-powershell $(. /etc/os-release; echo "$VERSION_CODENAME") main" \
+  | sudo tee /etc/apt/sources.list.d/samba-powershell.list
+sudo apt update
+sudo apt install samba-powershell
 ```
 
-A new `pwsh` then finds the cmdlets without `Import-Module`:
+The suites are `bookworm` and `trixie`. To install a package built by hand
+instead, `sudo apt install ./samba-powershell_0.2.0-1_all.deb` resolves the same
+dependencies.
+
+A new `pwsh` then finds the cmdlets, with `Import-Module SambaAD` or without it:
 
 ```powershell
 Get-Command Get-ADUser            # Source: SambaAD
@@ -114,6 +126,51 @@ Get-Module -ListAvailable SambaAD # ModuleBase: /usr/local/share/powershell/Modu
 ```
 
 `sudo apt purge samba-powershell` removes everything, the link included.
+
+## Installing from the PowerShell Gallery
+
+```powershell
+Install-Module SambaAD
+Import-Module SambaAD
+```
+
+`Install-Module` copies one folder and nothing else, so the module published to
+the gallery holds its backend inside it, under `backend/`, and runs it through
+`/usr/bin/python3`, since unpacking drops execute bits.
+`tools/build_gallery_module.sh` stages that folder. A gallery cannot install a
+Debian package, so `python3-ldap` and `libsasl2-modules-gssapi-mit` must be
+installed first, which contract rule 7.2 requires anyway; a cmdlet names them
+when they are missing, with `SambaAD.ClientUnavailable`.
+
+Use the package or the gallery on one system, not both. `Install-Module` declines
+to install beside the package without `-Force`, and with it a user's own copy
+shadows the package's. `-Scope AllUsers` would write through the package's link
+into files dpkg owns.
+
+## Publishing a release
+
+Pushing a version tag runs `.github/workflows/release.yml`. It refuses a tag that
+disagrees with `debian/changelog`, builds and lints the package, adds it to the
+pool on the `gh-pages` branch, regenerates and signs the indexes with
+`tools/apt_publish.sh`, verifies them with the public key alone, and pushes the
+branch. A version already published keeps its bytes. It then publishes the module
+to the gallery.
+
+It reads two secrets, which belong to whoever owns the archive and are never made
+by the workflow:
+
+| Secret | What | How |
+|---|---|---|
+| `APT_SIGNING_KEY` | the private key that signs the archive; required | `sh tools/make_apt_signing_key.sh` makes it, stores it and starts the release |
+| `PSGALLERY_API_KEY` | an API key of a gallery account; without it the gallery is skipped with a notice | `gh secret set PSGALLERY_API_KEY --repo HardenSamba/samba-powershell` |
+
+The ecosystem's own archive is `hardensamba-apt`, whose pipeline has no origin
+yet and calls choosing one a decision for its owner. This archive uses the layout
+that repository decided, `pool/main/<initial>/<source>/`, without its two
+channels, so moving the package there later changes the client's source line and
+nothing else. GitHub Pages serves a site only from a public repository on the
+organisation's plan, which is why this repository is public. Pages caps a site at
+1 GB and caches for ten minutes, so a new version can take that long to appear.
 
 ## Building it
 
@@ -151,10 +208,10 @@ sudo sh install.sh --uninstall   # remove it
 
 It refuses to run while the package is installed, since both would answer to
 the same command, and refuses while any link is where the module goes. Its
-launcher uses `/usr/bin/python3`, the interpreter the Debian packages of
-samba-adws and samba install for. Before it reports success it checks its own
+launcher uses `/usr/bin/python3`, the interpreter the Debian package of
+python-ldap installs for. Before it reports success it checks its own
 result: the launcher starts, and `pwsh`, if present, lists the module where it
-was put. It warns, without failing, when `pwsh` or the samba-adws client is
+was put. It warns, without failing, when `pwsh` or python-ldap is
 missing, which the package would have pulled in as dependencies. Running it
 again replaces the files with the checkout's.
 
@@ -164,7 +221,7 @@ again replaces the files with the checkout's.
 |---|---|---|
 | Module | `/usr/share/samba-powershell/Modules/SambaAD`, linked from `/usr/local/share/powershell/Modules/SambaAD` | `/usr/local/share/powershell/Modules/SambaAD` |
 | Backend | `/usr/lib/python3/dist-packages/samba_powershell`, launcher `/usr/bin/samba-ad-backend` | `/usr/local/lib/samba-powershell`, launcher `/usr/local/bin/samba-ad-backend` |
-| PowerShell, samba-adws | installed as dependencies | checked for, with a warning |
+| PowerShell, python-ldap | installed as dependencies | checked for, with a warning |
 | Byte-compiled Python | at install, by `dh_python3` | on first use |
 | Update | `apt install` a newer package | run `install.sh` from a newer checkout |
 | Removal | `apt purge samba-powershell` | `install.sh --uninstall` |
@@ -197,10 +254,9 @@ that never saw a build tool, without passing files between jobs.
 packages and the checkout:
 
 1. PowerShell is installed by the documented steps above, and nothing else.
-2. The samba-adws repository is private and the workflow's token cannot reach
-   it, so an empty stand-in package, `tests/package/samba-adws.equivs`, satisfies
-   the dependency; the cmdlets then report the client missing, which the checks
-   expect. `python3-yaml` is the one tool the checks themselves need.
+2. `python3-ldap` and the SASL plugin are installed first, so the checks can tell
+   what the package itself added. `python3-yaml` is the one tool the checks
+   themselves need.
 3. `tests/test_package.sh deb` checks the package's `Depends`, installs it under
    umask 077 and checks, in a fresh `pwsh` with no `Import-Module`, as root and
    as the unprivileged user `nobody`, that `Get-ADUser -<Tab>` completes
@@ -221,11 +277,19 @@ packages and the checkout:
    another user than root, and that `install.sh --uninstall` restores the
    system.
 
-The same script, run on a controller with the real samba-adws, expects the
-backend to ask for a server instead of reporting the client missing; it has been
-run that way on a Samba 4.17 controller with samba-adws 1.0.1, together with an
-upgrade from an earlier build and the cmdlets run by an unprivileged user and
-over a non-login `ssh` command.
+6. `tests/test_gallery.ps1` publishes the module to a throwaway local repository
+   and installs it with `Install-PSResource` and with `Install-Module`, in a
+   throwaway home, and runs the cmdlets from there.
+
+`tests/package/test_apt_archive.sh`, in another fresh container with only
+PowerShell's repository added, publishes the package into an archive signed with
+a throwaway key, checks that apt refuses a tampered `InRelease`, and installs
+through apt alone, which proves the `Depends` are complete.
+
+`tests/package/ci_live.sh`, in a last privileged container, provisions a real
+Samba domain with no samba-adws installed and nothing on the ADWS port, installs
+the package, and runs `tests/test_live.ps1` and `tests/test_gallery.ps1` against
+it, which proves the module needs nothing on a controller but Samba.
 
 ## lintian
 

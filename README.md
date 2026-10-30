@@ -13,12 +13,13 @@ speaking to a Samba domain controller.
 
 ## Status
 
-**Read cmdlets working against a live domain; not a packaged release.**
-`Get-ADUser`, `Get-ADComputer`, `Get-ADGroup` and `Get-ADObject` read a Samba
-domain through the `samba-adws` client. They have been checked on a Samba 4.17
-controller running samba-adws 1.0.1, value by value against `ldbsearch`. They
-install as a Debian package or through `install.sh`, both checked in CI. The
-write cmdlets are not done, and the package is not published yet.
+**Read cmdlets working against a live domain.** `Get-ADUser`, `Get-ADComputer`,
+`Get-ADGroup` and `Get-ADObject` read a Samba domain directly over LDAP,
+encrypted and authenticated with the caller's Kerberos ticket. They need nothing
+on the domain controller but Samba: CI proves that against a freshly provisioned
+domain with no other service installed. They install through `apt`, through
+`Install-Module` or through `install.sh`, each checked in CI. The write cmdlets
+are not done.
 
 What is actually in this repository today:
 
@@ -72,8 +73,8 @@ The completed module will provide:
 - **Shell integration and tab completion**, so the module is usable
   interactively and not only from scripts.
 
-What it will **not** do is speak the wire protocol itself. That is `samba-adws`,
-and it already exists.
+What it will **not** do is reimplement LDAP, SASL or Kerberos. Those come from
+`python3-ldap` and the system libraries.
 
 ## Why it exists
 
@@ -109,41 +110,52 @@ Taken from `MODULE.yaml`, which is the authoritative declaration.
 | Operating system | Debian, plain | The module must install and run without the HardenSamba image |
 | Python | 3.11 or later | Declared in `pyproject.toml`; the ecosystem targets the version in Debian stable |
 | Samba AD domain | Required | The module administers a directory; it has nothing to do without one |
-| Module dependency | `samba-adws` (depends), 1.0.0 or later | The cmdlets speak the Active Directory Web Services protocol, which that module implements; its search client resolves account names and reads the schema |
+| Module dependencies | None | The cmdlets read the directory over LDAP, which every Samba domain controller serves |
 | Debian packages | `powershell` | The cmdlet surface is a PowerShell module and needs a PowerShell host |
+| | `python3-ldap`, `libsasl2-modules-gssapi-mit` | LDAP, and Kerberos authentication over it |
 
 **Installs on:** domain controller or workstation. It is a client-side tool, so
 a workstation is the usual place. Installing it on the controller is supported,
 for administering the machine you are logged into.
 
-Two notes on that dependency list:
-
-- `samba-adws` must be reachable. The cmdlets are a client. A domain controller
-  running the ADWS service, on TCP 9389, is what they talk to.
-- `powershell` is not in Debian stable. The package depends on it all the same
-  and the documented source is Microsoft's APT repository;
-  [`docs/packaging.md`](docs/packaging.md) gives the commands and the reasoning,
-  and whether that satisfies contract rule 7.2 is open in
-  [hardensamba-modulekit#6](https://github.com/HardenSamba/hardensamba-modulekit/issues/6).
+One note on that dependency list: `powershell` is not in Debian stable. The
+package depends on it all the same and the documented source is Microsoft's APT repository;
+[`docs/packaging.md`](docs/packaging.md) gives the commands and the reasoning,
+and whether that satisfies contract rule 7.2 is open in
+[hardensamba-modulekit#6](https://github.com/HardenSamba/hardensamba-modulekit/issues/6).
 
 ## Installation
 
-[`docs/packaging.md`](docs/packaging.md) covers both ways in full, and compares
+[`docs/packaging.md`](docs/packaging.md) covers every way in full, and compares
 them.
 
 ### The package
 
-The ecosystem APT repository is `hardensamba-apt`, which does not publish
-`samba-powershell` yet. Build the package from a checkout, then install it with
-PowerShell and samba-adws already installed:
+With PowerShell available as [`docs/packaging.md`](docs/packaging.md) describes,
+add the signed archive once, then install:
 
 ```bash
-dpkg-buildpackage -us -uc -b
-sudo apt install ../samba-powershell_0.1.0-1_all.deb
+sudo curl -fsSLo /usr/share/keyrings/hardensamba-samba-powershell.gpg \
+  https://hardensamba.github.io/samba-powershell/hardensamba-samba-powershell.gpg
+echo "deb [signed-by=/usr/share/keyrings/hardensamba-samba-powershell.gpg] https://hardensamba.github.io/samba-powershell $(. /etc/os-release; echo "$VERSION_CODENAME") main" \
+  | sudo tee /etc/apt/sources.list.d/samba-powershell.list
+sudo apt update
+sudo apt install samba-powershell
 ```
 
-A new `pwsh` finds the cmdlets without `Import-Module`. `sudo apt purge
-samba-powershell` removes everything it installed.
+A new `pwsh` finds the cmdlets, with `Import-Module SambaAD` or without it. `sudo
+apt purge samba-powershell` removes everything it installed.
+
+### The PowerShell Gallery
+
+```powershell
+Install-Module SambaAD
+Import-Module SambaAD
+```
+
+The module holds its own backend, but a gallery cannot install a Debian package,
+so `python3-ldap` and `libsasl2-modules-gssapi-mit` must be there first; a cmdlet
+says so when they are not. Use the package or the gallery on one system, not both.
 
 ### Without the archive
 
@@ -197,7 +209,7 @@ not an imitation shell command.
 
 ### Reading the directory
 
-With `samba-ad-backend` on `PATH`, samba-adws installed and a Kerberos ticket
+With `samba-ad-backend` on `PATH`, `python3-ldap` installed and a Kerberos ticket
 for the calling user (`kinit`), from a checkout:
 
 ```powershell
@@ -233,14 +245,12 @@ Set-ADAccountPassword -Identity jdoe -Reset
 Remove-ADUser -Identity jdoe -WhatIf
 ```
 
-Authentication follows the transport through the caller's existing Kerberos
-ticket cache. The module carries no permission model of its own: samba-adws
-runs every request as the principal that authenticated it
-([`samba-adws#8`](https://github.com/HardenSamba/samba-adws/issues/8), fixed in
-samba-adws 1.0.0). Reads are not yet filtered attribute by attribute on the
-server ([`samba-adws#17`](https://github.com/HardenSamba/samba-adws/issues/17)),
-so a caller can read attributes its ACLs hide over LDAP. No write surface is
-considered safe or complete until #8 has a live allow/deny proof.
+Authentication uses the caller's existing Kerberos ticket cache. The module
+carries no permission model of its own: it binds to LDAP as the caller, so the
+directory applies that principal's ACLs to every read. The session is encrypted,
+and a bind that cannot reach that protection fails rather than continuing in
+clear. No write surface is considered safe or complete until it has a live
+allow/deny proof.
 
 ## Configuration
 
@@ -264,10 +274,9 @@ this file expecting it to take effect.
 # Empty means: discover through DNS, as a Windows client would.
 server =
 
-# TCP port of the Active Directory Web Services endpoint on that
-# controller. 9389 is the protocol default and there is rarely a
-# reason to change it.
-port = 9389
+# TCP port of the LDAP server on that controller. 389 is the protocol
+# default and there is rarely a reason to change it.
+port = 389
 
 # Seconds to wait for a response before the cmdlet gives up.
 timeout = 30
@@ -290,12 +299,10 @@ HardenSamba is a set of independent modules rather than a monolith. Each one
 installs on a plain Debian system, and each one declares what it needs and what
 it touches in its `MODULE.yaml`.
 
-**This module depends on `samba-adws`.** That module implements Active Directory
-Web Services on TCP 9389: the .NET message framing, the GSSAPI security layer,
-the binary WCF encoding and the WS-\* operations that the Windows
-`ActiveDirectory` cmdlets speak. It is the working half of this pair. This
-module is the client half, and its whole value proposition rests on that
-protocol implementation already existing.
+**This module depends on no other module.** It talks to Samba's own LDAP server
+on TCP 389, so a domain controller needs nothing else installed. In particular
+it does not use `samba-adws`, which serves Active Directory Web Services to the
+Windows `ActiveDirectory` cmdlets and can stay on a controller for them.
 
 **Nothing currently declares a dependency on this module.** It sits at the edge
 of the ecosystem, facing the operator. Checked against every sibling manifest.
@@ -304,7 +311,7 @@ of the ecosystem, facing the operator. Checked against every sibling manifest.
 
 | Concern | Owner |
 |---|---|
-| The ADWS wire protocol | `samba-adws` |
+| Serving Active Directory Web Services to Windows clients | `samba-adws` |
 | Provisioning the domain controller, and `smb.conf` | `samba-dc-role` |
 | Replication and database health checks | `samba-domain-health` |
 | Group Policy authoring, and applying policy on Linux | `samba-gpo-engine`, `gpo-agent-linux` |
@@ -395,7 +402,7 @@ in a fresh container, as did `install.sh`; nothing else.
 |---|---|
 | `MODULE.yaml` | The manifest. Authoritative for dependencies and the write surface |
 | `CLAUDE.md` | Project instructions, restating the parts of the contract that bind here |
-| `src/samba_powershell/` | Typed Python backend and lazy ADWS client adapter |
+| `src/samba_powershell/` | Typed Python backend and lazy LDAP client adapter |
 | `powershell/SambaAD/` | Module manifest, cmdlet surface and format data |
 | `tests/` | Offline Python and PowerShell boundary tests |
 | `benchmarks/` | Required process and Unix-socket transport prototypes |
@@ -484,5 +491,4 @@ version 1.0, in [`LICENSE`](LICENSE), which `debian/copyright` carries in full.
 This is a greenfield module, not a fork. There is no upstream project, no
 inherited licence and no divergence to describe. The closest reference points
 are the published cmdlet surface of the Windows `ActiveDirectory` module and the
-wire behaviour implemented in `samba-adws`, and neither is a code ancestor of
-anything here.
+LDAP specifications, and neither is a code ancestor of anything here.

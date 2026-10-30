@@ -12,14 +12,14 @@ from samba_powershell.object_classes import SPECS, ClassSpec
 from samba_powershell.resolve import wire_reference
 from samba_powershell.schema import describe
 
-ADWS_TIMEOUT = 30.0
+DIRECTORY_TIMEOUT = 30.0
 
 # The attribute fetch behind the decided Get-ADUser default set, re-exported
 # under the name the tests and the documentation already use.
 DEFAULT_USER_PROPERTIES = SPECS["user"].fetch
 
 
-# Retrieves one object of a known class through the samba-adws client boundary.
+# Retrieves one object of a known class through the directory client boundary.
 # Everything the client raises is translated at this one place, against the
 # server and the identity the caller gave.
 def get_object(request: dict[str, object], client_factory: ClientFactory,
@@ -29,7 +29,7 @@ def get_object(request: dict[str, object], client_factory: ClientFactory,
     server, port, endpoint = parameters.requested_endpoint(request)
     extras = properties.requested_extras(request)
     try:
-        return read(client_factory(server, port, ADWS_TIMEOUT), identity, spec, extras)
+        return read(client_factory(server, port, DIRECTORY_TIMEOUT), identity, spec, extras)
     except BackendError:
         raise
     except Exception as exc:

@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import os
+import re
 
 from samba_powershell.errors import BackendError
-from samba_powershell.identity import CONTROL_CHARACTER
 
-# The Active Directory Web Services port, [MS-ADDM]; -Server host:port overrides it.
-ADWS_PORT = 9389
+# The LDAP port, RFC 4511; -Server host:port overrides it.
+LDAP_PORT = 389
 # What a paste carries around a value: dropped. Python's str.strip() would drop
 # more, control characters such as US and FF included, and resolve the rest.
 PASTE_WHITESPACE = " \t\r\n"
+# A host name or a bracketed address. It goes into an LDAP URI, where a space
+# would start a second server and a slash would end the host.
+HOST = re.compile(r"[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\]")
 
 
 # Rejects undeclared fields, including credentials that must stay in Kerberos.
@@ -50,15 +53,15 @@ def requested_endpoint(parameters: dict[str, object]) -> tuple[str, int, str]:
     text = value.strip(PASTE_WHITESPACE) if isinstance(value, str) else ""
     if not text:
         raise BackendError(
-            "No ADWS server was supplied. Use -Server or SAMBA_AD_SERVER.",
+            "No domain controller was supplied. Use -Server or SAMBA_AD_SERVER.",
             "SambaAD.ServerRequired",
             "InvalidArgument",
             "Server",
         )
-    if CONTROL_CHARACTER.search(text):
-        raise BackendError(f"Server {text!r} contains a control character, which no host "
-                           "name holds.", "SambaAD.InvalidParameter", "InvalidArgument", text)
     host, separator, port = text.rpartition(":")
-    if separator and host and port.isdigit() and 0 < int(port) < 65536:
-        return host, int(port), text
-    return text, ADWS_PORT, text
+    if not (separator and port.isdigit() and 0 < int(port) < 65536):
+        host, port = text, str(LDAP_PORT)
+    if HOST.fullmatch(host) is None:
+        raise BackendError(f"Server {text!r} is not a host name or host:port.",
+                           "SambaAD.InvalidParameter", "InvalidArgument", text)
+    return host, int(port), text

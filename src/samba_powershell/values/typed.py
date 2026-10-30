@@ -13,7 +13,7 @@ from samba_powershell.values.times import (
     decode_interval_time,
 )
 
-# attributeSyntax OIDs from the syntax table of [MS-ADTS]. The endpoint carries
+# attributeSyntax OIDs from the syntax table of [MS-ADTS]. LDAP carries
 # every one of these as text, so the schema says a value is a number or a flag.
 BOOLEAN = "2.5.5.8"
 INTEGER = "2.5.5.9"
